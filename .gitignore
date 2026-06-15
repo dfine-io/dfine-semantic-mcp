@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+
+# Data / SQLite
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Artifacts
+*.tgz
+
+# OS
+.DS_Store

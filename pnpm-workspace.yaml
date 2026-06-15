@@ -1,0 +1,6 @@
+onlyBuiltDependencies:
+  - better-sqlite3
+  - onnxruntime-node
+  - protobufjs
+  - sharp
+  - unrs-resolver
