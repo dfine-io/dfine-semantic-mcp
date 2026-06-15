@@ -36,7 +36,7 @@ export async function handleUsageGuide(uri: URL) {
 ## Tools
 
 ### semantic_search
-- path: MUST be absolute project root (e.g. /Users/user/project), NOT a subfolder
+- path: MUST be absolute project root (e.g. /absolute/path/to/project), NOT a subfolder
 - Project MUST be indexed first via index_project
 - Default (compact): returns file:line references — use Read tool to inspect
 - returnFullContent=true: returns full code chunks inline — use for deep-dives with <20 results
