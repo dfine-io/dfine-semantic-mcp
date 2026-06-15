@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-06-15
+
+### Changed
+
+- Updated all dependencies to their latest versions; `npm audit` reports no known vulnerabilities.
+
+### Added
+
+- Security policy (`SECURITY.md`) with a private reporting channel.
+
+### Fixed
+
+- Use a platform-neutral example path in the usage guide.
+
 ## [0.1.0] - 2026-06-15
 
 Initial public release.
@@ -22,4 +36,5 @@ Initial public release.
 - Batched embedding during indexing for a faster initial index.
 - Cross-platform support: native prebuilds for macOS, Linux and Windows, and CRLF-safe git parsing.
 
+[0.1.1]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.0
