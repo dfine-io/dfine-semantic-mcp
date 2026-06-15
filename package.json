@@ -1,0 +1,80 @@
+{
+  "name": "@dfine-io-gmbh/semantic-mcp",
+  "version": "0.1.0",
+  "description": "Semantic codebase search MCP server — embeds project chunks into a local SQLite vector store and exposes natural-language search over them.",
+  "license": "MIT",
+  "author": "dfine.io <support@dfine.io>",
+  "homepage": "https://github.com/dfine-io/dfine-semantic-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dfine-io/dfine-semantic-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dfine-io/dfine-semantic-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "semantic-search",
+    "embeddings",
+    "sqlite-vec",
+    "transformers",
+    "claude-code"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "dfine-semantic-mcp": "./build/index.js"
+  },
+  "files": [
+    "build",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node build/index.js",
+    "lint": "eslint src/ --max-warnings=0",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "check": "tsc && eslint src/ --max-warnings=0 && prettier --check \"src/**/*.ts\"",
+    "prepublishOnly": "rm -rf build && tsc && chmod +x build/index.js"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.4.0",
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "better-sqlite3": "^12.6.2",
+    "ignore": "^7.0.0",
+    "sqlite-vec": "^0.1.6",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "eslint": "^10.0.2",
+    "eslint-plugin-import-x": "^4.16.1",
+    "eslint-plugin-no-secrets": "^2.2.2",
+    "eslint-plugin-security": "^4.0.0",
+    "eslint-plugin-sonarjs": "^4.0.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "eslint": "10"
+      }
+    }
+  }
+}
