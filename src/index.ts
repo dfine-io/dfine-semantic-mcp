@@ -12,6 +12,7 @@ import {
   SEARCH_LIMIT_MAX,
   SEARCH_LIMIT_DEFAULT,
   SEARCH_THRESHOLD_DEFAULT,
+  QUERY_MAX_LENGTH,
 } from "./constants.js";
 
 const server = new McpServer({
@@ -31,6 +32,7 @@ server.registerTool(
     inputSchema: {
       query: z
         .string()
+        .max(QUERY_MAX_LENGTH)
         .describe(
           "Natural language search query — use full sentences, not keywords"
         ),
@@ -60,6 +62,10 @@ server.registerTool(
         ),
       include: z
         .array(z.string().regex(/^\.[a-z0-9]+$/i))
+        .refine(
+          (exts) => exts.every((e) => ALLOWED_EXTENSIONS.has(e)),
+          "Extension not in allowlist"
+        )
         .optional()
         .describe(
           'Additional file extensions to include beyond the default .ts/.tsx filter. Example: [".md", ".css"]'

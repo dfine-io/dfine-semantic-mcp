@@ -36,7 +36,9 @@ export async function embed(text: string): Promise<Float32Array> {
 
 // Batched embedding for indexing — far faster than one call per chunk.
 // Sub-batched to cap peak memory regardless of how many chunks a file has.
-export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
+export async function embedBatch(
+  texts: readonly string[]
+): Promise<Float32Array[]> {
   const ext = await getExtractor();
   const out: Float32Array[] = [];
   for (let i = 0; i < texts.length; i += EMBED_BATCH_SIZE) {

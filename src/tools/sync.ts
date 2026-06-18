@@ -3,8 +3,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { chunkCode } from "../chunking/chunker.js";
 import { embedBatch } from "../embedding/engine.js";
-import { type ChunkRecord, type VectorStore } from "../store/vector-store.js";
+import {
+  type ChunkRecord,
+  type VectorStore,
+  type FilePurgeStore,
+} from "../store/vector-store.js";
 import { scanChangedFiles, type ChangedFile } from "../utils/file-scanner.js";
+import { isWithinRoot } from "../utils/path-guard.js";
 import { DEFAULT_EXTENSIONS, MAX_FILE_SIZE } from "../constants.js";
 
 const SYNC_COOLDOWN_MS = 30_000;
@@ -76,7 +81,7 @@ export async function lazySync(
 async function applyChanges(
   store: VectorStore,
   projectPath: string,
-  changes: ChangedFile[]
+  changes: readonly ChangedFile[]
 ): Promise<{ synced: number; deleted: number }> {
   let synced = 0;
   let deleted = 0;
@@ -87,6 +92,8 @@ async function applyChanges(
       continue;
     }
     const absPath = join(projectPath, change.relativePath);
+    // Symlink guard: a tracked link must not read outside the project root.
+    if (!isWithinRoot(projectPath, absPath)) continue;
     try {
       const stat = statSync(absPath);
       if (stat.size > MAX_FILE_SIZE) continue;
@@ -101,7 +108,7 @@ async function applyChanges(
 }
 
 // Reconcile: purge stored paths that no longer exist on disk (committed deletes)
-function purgeMissing(store: VectorStore, projectPath: string): number {
+function purgeMissing(store: FilePurgeStore, projectPath: string): number {
   let deleted = 0;
   for (const filePath of store.getAllFilePaths()) {
     if (!existsSync(join(projectPath, filePath))) {

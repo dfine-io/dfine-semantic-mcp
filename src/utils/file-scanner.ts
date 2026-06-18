@@ -2,6 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import ignore from "ignore";
+import { isWithinRoot } from "./path-guard.js";
 import {
   MAX_FILE_SIZE,
   GIT_TIMEOUT_MS,
@@ -37,7 +38,7 @@ export interface ScannedFile {
 
 export function scanProject(
   projectPath: string,
-  extensions: string[]
+  extensions: readonly string[]
 ): ScannedFile[] {
   const ig = loadGitignore(projectPath);
   const extSet = new Set(extensions);
@@ -67,6 +68,8 @@ export function scanProject(
     if (ig.ignores(relPath)) continue;
 
     const absPath = join(projectPath, relPath);
+    // Symlink guard: a tracked link must not read outside the project root.
+    if (!isWithinRoot(projectPath, absPath)) continue;
     try {
       const stat = statSync(absPath);
       if (stat.size > MAX_FILE_SIZE) continue;
@@ -91,14 +94,16 @@ function loadGitignore(projectPath: string): ReturnType<typeof ignore> {
   return ig;
 }
 
+type ChangeStatus = "modified" | "added" | "deleted";
+
 export interface ChangedFile {
-  status: "modified" | "added" | "deleted";
+  status: ChangeStatus;
   relativePath: string;
 }
 
 export function scanChangedFiles(
   projectPath: string,
-  extensions: string[]
+  extensions: readonly string[]
 ): ChangedFile[] {
   const extSet = new Set(extensions);
   try {
@@ -127,7 +132,7 @@ export function scanChangedFiles(
         changes.push({ status: "deleted", relativePath: filePath });
       } else {
         changes.push({
-          status: xy === "??" ? "added" : "modified",
+          status: xy.startsWith("??") ? "added" : "modified",
           relativePath: filePath,
         });
       }
