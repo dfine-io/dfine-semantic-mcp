@@ -1,6 +1,6 @@
 {
   "name": "@dfine-io-gmbh/semantic-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Semantic codebase search MCP server — embeds project chunks into a local SQLite vector store and exposes natural-language search over them.",
   "license": "MIT",
   "author": "dfine.io <support@dfine.io>",
@@ -41,40 +41,25 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node build/index.js",
-    "lint": "eslint src/ --max-warnings=0",
-    "lint:fix": "eslint src/ --fix",
+    "lint:dlint": "dlint --format compact",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "check": "tsc && eslint src/ --max-warnings=0 && prettier --check \"src/**/*.ts\"",
-    "prepublishOnly": "rm -rf build && tsc && chmod +x build/index.js"
+    "check": "tsc && pnpm lint:dlint && prettier --check \"src/**/*.ts\"",
+    "prepublishOnly": "rm -rf build tsconfig.tsbuildinfo && tsc && chmod +x build/index.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "better-sqlite3": "^12.10.1",
+    "better-sqlite3": "^12.11.1",
     "ignore": "^7.0.5",
     "sqlite-vec": "^0.1.9",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@dfine-io-gmbh/dlint": "^1.2.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.9.3",
-    "@typescript-eslint/eslint-plugin": "^8.61.1",
-    "@typescript-eslint/parser": "^8.61.1",
-    "eslint": "^10.5.0",
-    "eslint-plugin-import-x": "^4.16.2",
-    "eslint-plugin-no-secrets": "^2.3.3",
-    "eslint-plugin-security": "^4.0.1",
-    "eslint-plugin-sonarjs": "^4.0.3",
-    "eslint-plugin-unused-imports": "^4.4.1",
     "prettier": "^3.8.4",
     "typescript": "^6.0.3"
-  },
-  "pnpm": {
-    "peerDependencyRules": {
-      "allowedVersions": {
-        "eslint": "10"
-      }
-    }
   }
 }

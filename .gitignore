@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 build/
+*.tsbuildinfo
 
 # Data / SQLite
 data/*.db
@@ -14,3 +15,6 @@ data/*.db-wal
 
 # OS
 .DS_Store
+.claude
+.CLAUDE.md
+dlint.config.ts
