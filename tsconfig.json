@@ -6,10 +6,12 @@
     "outDir": "./build",
     "rootDir": "./src",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "noImplicitReturns": true,
     "useUnknownInCatchVariables": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "incremental": true,
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
     "sourceMap": false

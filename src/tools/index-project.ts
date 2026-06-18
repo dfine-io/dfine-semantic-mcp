@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { scanProject, type ScannedFile } from "../utils/file-scanner.js";
-import { openStore, type VectorStore } from "../store/vector-store.js";
+import {
+  openStore,
+  type VectorStore,
+  type FilePurgeStore,
+} from "../store/vector-store.js";
 import { reindexFile } from "./sync.js";
 import { validateProjectPath } from "../utils/path-guard.js";
 import { type McpResponse, MS_PER_SECOND } from "../constants.js";
@@ -14,7 +18,7 @@ interface IndexArgs {
 
 async function indexFiles(
   store: VectorStore,
-  files: ScannedFile[],
+  files: readonly ScannedFile[],
   counts: { indexed: number; skipped: number }
 ): Promise<void> {
   for (const file of files) {
@@ -32,7 +36,10 @@ async function indexFiles(
   }
 }
 
-function purgeStaleEntries(store: VectorStore, files: ScannedFile[]): number {
+function purgeStaleEntries(
+  store: FilePurgeStore,
+  files: readonly ScannedFile[]
+): number {
   const scannedPaths = new Set(files.map((f) => f.relativePath));
   let purged = 0;
   for (const stored of store.getAllFilePaths()) {

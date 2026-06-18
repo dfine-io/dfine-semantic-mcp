@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-06-19
+
+### Security
+
+- Sandbox now resolves symlinks before the allowed-roots check and guards every file read, so a
+  tracked symlink can no longer escape the project root (hardens `SEMANTIC_ALLOWED_ROOTS`).
+
+### Changed
+
+- Stricter tool-input validation: `semantic_search` caps query length and allow-lists the
+  `include` extensions, consistent with the `index_project` extension allow-list.
+
 ## [0.1.1] - 2026-06-15
 
 ### Changed
@@ -36,5 +48,6 @@ Initial public release.
 - Batched embedding during indexing for a faster initial index.
 - Cross-platform support: native prebuilds for macOS, Linux and Windows, and CRLF-safe git parsing.
 
+[0.1.2]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.0

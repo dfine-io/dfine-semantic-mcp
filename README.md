@@ -80,7 +80,8 @@ runs. Delete a project's `.db` to force a clean re-index.
 ```bash
 pnpm install
 pnpm build        # tsc
-pnpm check        # tsc + eslint (security / no-secrets / sonarjs) + prettier
+pnpm lint         # dlint (dfine house linter, runs on the TS compiler)
+pnpm check        # tsc + dlint + prettier
 pnpm start
 ```
 

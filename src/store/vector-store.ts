@@ -26,7 +26,7 @@ export interface ChunkRecord {
   chunkType: string;
 }
 
-export interface SearchResult {
+interface SearchResult {
   file: string;
   line: number;
   lineEnd: number;
@@ -98,7 +98,7 @@ export class VectorStore {
 
   // Batch inserts in a transaction for 10-50x faster bulk writes
   insertChunks(
-    chunks: Array<{
+    chunks: ReadonlyArray<{
       chunk: Omit<ChunkRecord, "id">;
       embedding: Float32Array;
     }>
@@ -214,3 +214,9 @@ export class VectorStore {
     this.db.close();
   }
 }
+
+// Narrow view for callers that only reconcile stored paths (purge flows).
+export type FilePurgeStore = Pick<
+  VectorStore,
+  "getAllFilePaths" | "deleteFileChunks"
+>;

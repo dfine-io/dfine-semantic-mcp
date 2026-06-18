@@ -30,7 +30,7 @@ interface ResponseOptions {
 }
 
 function buildSearchResponse(
-  results: Array<{
+  results: ReadonlyArray<{
     file: string;
     line: number;
     lineEnd: number;

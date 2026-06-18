@@ -1,8 +1,10 @@
-export interface Chunk {
+type ChunkType = "function" | "class" | "type" | "block" | "file";
+
+interface Chunk {
   content: string;
   lineStart: number;
   lineEnd: number;
-  type: "function" | "class" | "type" | "block" | "file";
+  type: ChunkType;
 }
 
 const EXPORT_KEYWORDS = new Set([
@@ -40,7 +42,7 @@ interface BlockState {
 }
 
 function processBlockEnd(
-  lines: string[],
+  lines: readonly string[],
   chunks: Chunk[],
   block: BlockState,
   endIdx: number
@@ -62,12 +64,9 @@ function processBlockEnd(
 }
 
 function countBraces(line: string, depth: number): number {
-  let result = depth;
-  for (const ch of line) {
-    if (ch === "{" || ch === "(") result++;
-    if (ch === "}" || ch === ")") result--;
-  }
-  return result;
+  const opens = line.match(/[{(]/g)?.length ?? 0;
+  const closes = line.match(/[})]/g)?.length ?? 0;
+  return depth + opens - closes;
 }
 
 function isBlockEnded(
@@ -115,7 +114,7 @@ function chunkGeneric(content: string): Chunk[] {
 }
 
 function slidingWindow(
-  lines: string[],
+  lines: readonly string[],
   start: number,
   end: number,
   type: Chunk["type"]
