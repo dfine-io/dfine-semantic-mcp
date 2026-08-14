@@ -16,13 +16,12 @@ const DB_HASH_PREFIX_LENGTH = 12;
 // Singleton pool: one DB connection per project (process lifetime)
 const storePool = new Map<string, VectorStore>();
 
-export interface ChunkRecord {
-  id: number;
-  filePath: string;
+// Pfad und Hash kommen aus den Methodenparametern — im Batch-Eintrag wuerden
+// sie ein zweites Mal gefuehrt und koennten davon abweichen.
+export interface PendingChunk {
   lineStart: number;
   lineEnd: number;
   content: string;
-  contentHash: string;
   chunkType: string;
 }
 
@@ -83,7 +82,6 @@ export class VectorStore {
         chunk_type TEXT NOT NULL,
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
-      CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path);
       CREATE TABLE IF NOT EXISTS file_hashes (
         file_path TEXT PRIMARY KEY,
         content_hash TEXT NOT NULL,
@@ -94,15 +92,57 @@ export class VectorStore {
         embedding float[${DIMENSIONS}] distance_metric=cosine
       );
     `);
+    this.repair();
   }
 
-  // Batch inserts in a transaction for 10-50x faster bulk writes
-  insertChunks(
+  // Altstores tragen Duplikate und Chunks ohne file_hashes-Zeile. Der Unique-
+  // Index ist die Marke: existiert er, ist dieser Store bereits geheilt.
+  private repair() {
+    const healed = this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_chunks_unique'"
+      )
+      .get();
+    if (healed) return;
+
+    // Aufraeumen und beide Index-Wechsel in einer Transaktion: scheitert der
+    // Unique-Index, kehrt auch idx_chunks_file zurueck statt ganz zu fehlen.
+    const tx = this.db.transaction(() => {
+      this.db.exec(`
+        CREATE TEMP TABLE doomed AS
+          SELECT id FROM chunks WHERE id NOT IN (
+            SELECT MAX(id) FROM chunks GROUP BY file_path, line_start, line_end
+          )
+          UNION
+          SELECT id FROM chunks
+          WHERE file_path NOT IN (SELECT file_path FROM file_hashes);
+        DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM doomed);
+        DELETE FROM chunks WHERE id IN (SELECT id FROM doomed);
+        DROP TABLE doomed;
+        DROP INDEX IF EXISTS idx_chunks_file;
+        CREATE UNIQUE INDEX idx_chunks_unique
+          ON chunks(file_path, line_start, line_end);
+      `);
+    });
+    tx();
+  }
+
+  // Delete, Insert und Hash-Update in einer Transaktion — ein Abbruch laesst
+  // die Datei entweder vollstaendig neu indiziert oder unveraendert zurueck.
+  replaceFileChunks(
+    filePath: string,
+    contentHash: string,
     chunks: ReadonlyArray<{
-      chunk: Omit<ChunkRecord, "id">;
+      chunk: PendingChunk;
       embedding: Float32Array;
     }>
   ) {
+    const deleteVec = this.db.prepare(
+      "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?)"
+    );
+    const deleteChunks = this.db.prepare(
+      "DELETE FROM chunks WHERE file_path = ?"
+    );
     const insertChunk = this.db.prepare(`
       INSERT INTO chunks (file_path, line_start, line_end, content, content_hash, chunk_type)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -111,18 +151,25 @@ export class VectorStore {
     const insertVec = this.db.prepare(
       `INSERT INTO vec_chunks (chunk_id, embedding) VALUES (last_insert_rowid(), ?)`
     );
+    const setHash = this.db.prepare(
+      "INSERT OR REPLACE INTO file_hashes (file_path, content_hash, last_indexed) VALUES (?, ?, unixepoch())"
+    );
     const tx = this.db.transaction(() => {
+      // Unbedingt: ein fehlender Hash-Eintrag darf das Delete nicht ueberspringen.
+      deleteVec.run(filePath);
+      deleteChunks.run(filePath);
       for (const { chunk, embedding } of chunks) {
         insertChunk.run(
-          chunk.filePath,
+          filePath,
           chunk.lineStart,
           chunk.lineEnd,
           chunk.content,
-          chunk.contentHash,
+          contentHash,
           chunk.chunkType
         );
         insertVec.run(Buffer.from(embedding.buffer));
       }
+      setHash.run(filePath, contentHash);
     });
     tx();
   }
@@ -173,24 +220,21 @@ export class VectorStore {
     return row?.content_hash ?? null;
   }
 
-  setFileHash(filePath: string, hash: string) {
-    this.db
-      .prepare(
-        "INSERT OR REPLACE INTO file_hashes (file_path, content_hash, last_indexed) VALUES (?, ?, unixepoch())"
-      )
-      .run(filePath, hash);
-  }
-
   deleteFileChunks(filePath: string) {
-    this.db
-      .prepare(
-        "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?)"
-      )
-      .run(filePath);
-    this.db.prepare("DELETE FROM chunks WHERE file_path = ?").run(filePath);
-    this.db
-      .prepare("DELETE FROM file_hashes WHERE file_path = ?")
-      .run(filePath);
+    // Drei Autocommits liessen ein Abbruch Chunks ohne Vektoren zuruecklassen,
+    // die kein Folgelauf mehr anfasst, weil der Hash-Eintrag noch steht.
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?)"
+        )
+        .run(filePath);
+      this.db.prepare("DELETE FROM chunks WHERE file_path = ?").run(filePath);
+      this.db
+        .prepare("DELETE FROM file_hashes WHERE file_path = ?")
+        .run(filePath);
+    });
+    tx();
   }
 
   getAllFilePaths(): string[] {
@@ -210,6 +254,20 @@ export class VectorStore {
     return { totalChunks: chunks.count, totalFiles: files.count };
   }
 
+  // Reset ueber die gepoolte Connection, nicht ueber das Dateisystem: eine
+  // geloeschte .db bleibt beschreibbar, solange storePool den Deskriptor haelt.
+  clear() {
+    const tx = this.db.transaction(() => {
+      // Unqualifiziert, damit auch verwaiste Vektoren ohne Chunk-Zeile fallen.
+      this.db.exec(`
+        DELETE FROM vec_chunks;
+        DELETE FROM chunks;
+        DELETE FROM file_hashes;
+      `);
+    });
+    tx();
+  }
+
   close() {
     this.db.close();
   }
@@ -219,4 +277,10 @@ export class VectorStore {
 export type FilePurgeStore = Pick<
   VectorStore,
   "getAllFilePaths" | "deleteFileChunks"
+>;
+
+// Narrow view for the reindex path: read the stored hash, replace the file.
+export type FileIndexStore = Pick<
+  VectorStore,
+  "getFileHash" | "replaceFileChunks"
 >;

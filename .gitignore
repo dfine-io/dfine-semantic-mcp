@@ -15,6 +15,9 @@ data/*.db-wal
 
 # OS
 .DS_Store
+
+# Local tooling — not for the public repo
 .claude
-.CLAUDE.md
+CLAUDE.md
+dfine.config.json
 dlint.config.ts

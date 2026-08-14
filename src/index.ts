@@ -79,7 +79,7 @@ server.registerTool(
   "index_project",
   {
     description:
-      "Index a project directory for semantic search — scans, chunks, and embeds code files",
+      "Index a project directory for semantic search — scans, chunks, and embeds code files. Only changed files are re-embedded. Set force=true to discard the stored index and rebuild it from scratch.",
     inputSchema: {
       path: z.string().describe("Absolute path to project root"),
       extensions: z
@@ -90,6 +90,12 @@ server.registerTool(
           "Extension not in allowlist"
         )
         .describe("File extensions to index"),
+      force: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Discard the stored index and rebuild from scratch. Use after a corrupted or interrupted run."
+        ),
     },
   },
   handleIndexProject

@@ -41,6 +41,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node build/index.js",
+    "test": "tsc && node --test test/*.test.mjs",
     "lint:dlint": "dlint --format compact",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
@@ -49,17 +50,17 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "better-sqlite3": "^12.11.1",
-    "ignore": "^7.0.5",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.3",
+    "ignore": "^7.0.6",
     "sqlite-vec": "^0.1.9",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@dfine-io-gmbh/dlint": "^1.2.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.9.3",
-    "prettier": "^3.8.4",
+    "@dfine-io-gmbh/dlint": "^1.5.1",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.20.1",
+    "prettier": "^3.9.6",
     "typescript": "^6.0.3"
   }
 }
