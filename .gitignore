@@ -5,16 +5,47 @@ node_modules/
 build/
 *.tsbuildinfo
 
-# Data / SQLite
-data/*.db
-data/*.db-shm
-data/*.db-wal
+# Data / SQLite — indexed source from other projects, never publish
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Credentials — .npmrc carries the publish token
+.env
+.env.*
+!.env.example
+.npmrc
+.yarnrc
+.yarnrc.yml
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+secrets.json
 
 # Artifacts
 *.tgz
+coverage/
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# OS
+# Caches
+.cache/
+.turbo/
+tmp/
+
+# Editors / OS
 .DS_Store
+.vscode/
+.idea/
+*.swp
 
 # Local tooling — not for the public repo
 .claude
