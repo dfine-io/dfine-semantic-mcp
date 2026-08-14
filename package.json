@@ -1,6 +1,6 @@
 {
   "name": "@dfine-io-gmbh/semantic-mcp",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Semantic codebase search MCP server — embeds project chunks into a local SQLite vector store and exposes natural-language search over them.",
   "license": "MIT",
   "author": "dfine.io <support@dfine.io>",
@@ -23,7 +23,7 @@
   ],
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "bin": {
     "dfine-semantic-mcp": "./build/index.js"
@@ -59,8 +59,8 @@
   "devDependencies": {
     "@dfine-io-gmbh/dlint": "^1.5.1",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^22.20.1",
+    "@types/node": "^24.13.3",
     "prettier": "^3.9.6",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }

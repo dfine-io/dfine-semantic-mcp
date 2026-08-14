@@ -17,7 +17,7 @@ invocations. After the first download the server runs fully offline.
 
 ## Requirements
 
-- **Node.js ≥ 20**
+- **Node.js ≥ 22**
 - **Network on first run** (one-time model download); offline afterwards
 - **~130 MB** disk for the model, plus space for the per-project index
 - **Git** on the `PATH` — files are enumerated via `git ls-files` / `git status`
