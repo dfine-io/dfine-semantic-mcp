@@ -52,3 +52,4 @@ tmp/
 CLAUDE.md
 dfine.config.json
 dlint.config.ts
+test/
