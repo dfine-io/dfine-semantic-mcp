@@ -15,9 +15,11 @@ import {
   QUERY_MAX_LENGTH,
 } from "./constants.js";
 
+// Der Client sieht diese Version im Handshake — bei jedem Release mit der
+// Version aus package.json gleichziehen, sonst meldet der Server eine falsche.
 const server = new McpServer({
   name: "dfine-semantic",
-  version: "0.1.0",
+  version: "0.1.3",
 });
 
 server.registerResource("usage-guide", "semantic://usage-guide", {}, (uri) =>
