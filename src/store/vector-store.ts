@@ -97,17 +97,25 @@ export class VectorStore {
 
   // Altstores tragen Duplikate und Chunks ohne file_hashes-Zeile. Der Unique-
   // Index ist die Marke: existiert er, ist dieser Store bereits geheilt.
+  private isHealed(): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_chunks_unique'"
+        )
+        .get() !== undefined
+    );
+  }
+
   private repair() {
-    const healed = this.db
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_chunks_unique'"
-      )
-      .get();
-    if (healed) return;
+    if (this.isHealed()) return;
 
     // Aufraeumen und beide Index-Wechsel in einer Transaktion: scheitert der
     // Unique-Index, kehrt auch idx_chunks_file zurueck statt ganz zu fehlen.
     const tx = this.db.transaction(() => {
+      // Ein zweiter Prozess kann zwischen Vorpruefung und Transaktionsbeginn
+      // repariert haben — dann ist hier nichts mehr zu tun.
+      if (this.isHealed()) return;
       this.db.exec(`
         CREATE TEMP TABLE doomed AS
           SELECT id FROM chunks WHERE id NOT IN (
@@ -120,11 +128,13 @@ export class VectorStore {
         DELETE FROM chunks WHERE id IN (SELECT id FROM doomed);
         DROP TABLE doomed;
         DROP INDEX IF EXISTS idx_chunks_file;
-        CREATE UNIQUE INDEX idx_chunks_unique
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_unique
           ON chunks(file_path, line_start, line_end);
       `);
     });
-    tx();
+    // immediate(): nimmt den Schreib-Lock sofort, statt ihn erst beim ersten
+    // Write zu holen — sonst laufen zwei Startvorgaenge in einen Konflikt.
+    tx.immediate();
   }
 
   // Delete, Insert und Hash-Update in einer Transaktion — ein Abbruch laesst

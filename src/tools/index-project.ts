@@ -18,7 +18,11 @@ type CancellableRequest = { readonly signal: AbortSignal };
 // sich an, statt dieselben Dateien ein zweites Mal zu embedden.
 const indexInFlight = new Map<
   string,
-  { readonly run: Promise<McpResponse>; readonly extKey: string }
+  {
+    readonly run: Promise<McpResponse>;
+    readonly extKey: string;
+    readonly force: boolean;
+  }
 >();
 
 interface IndexArgs {
@@ -80,9 +84,9 @@ export async function handleIndexProject(
   const extKey = [...args.extensions].sort().join(",");
   const active = indexInFlight.get(projectPath);
   if (active) {
-    // Nur echte Wiederholungen duerfen sich anhaengen. Ein force-Aufruf oder
-    // andere Endungen bekaemen sonst fremde Arbeit als eigenen Erfolg gemeldet.
-    if (args.force || active.extKey !== extKey) {
+    // Nur echte Wiederholungen duerfen sich anhaengen — in beide Richtungen:
+    // auch ein normaler Aufruf darf keinen laufenden force-Neuaufbau erben.
+    if (args.force || active.force || active.extKey !== extKey) {
       return {
         content: [
           {
@@ -98,7 +102,7 @@ export async function handleIndexProject(
     return active.run;
   }
   const run = runIndex(projectPath, args, extra);
-  indexInFlight.set(projectPath, { run, extKey });
+  indexInFlight.set(projectPath, { run, extKey, force: args.force });
   try {
     return await run;
   } finally {
