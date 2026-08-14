@@ -50,3 +50,4 @@ tmp/
 # Local tooling, not for the public repo
 dfine.config.json
 dlint.config.ts
+test/

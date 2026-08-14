@@ -41,7 +41,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node build/index.js",
-    "test": "tsc && node --test test/*.test.mjs",
+    "test": "tsc && node --test \"test/*.test.mjs\"",
     "lint:dlint": "dlint --format compact",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
