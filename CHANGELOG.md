@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-08-14
+
+### Fixed
+
+- An interrupted or overlapping index run no longer duplicates a file's chunks. Deleting, writing
+  and updating the hash now happen in one transaction, so a run that dies mid-file leaves the file
+  either fully re-indexed or untouched — and search stops returning every hit twice.
+- Opening a store repairs it once: duplicate chunks and chunks left without a hash entry are
+  removed, and a unique index keeps them from coming back.
+- Cancelling `index_project` now ends the run instead of letting it write on in the background.
+
+### Added
+
+- `index_project` accepts `force: true` to discard the stored index and rebuild it from scratch.
+  Deleting the `.db` file while the server runs never worked, because the open connection keeps
+  writing to it.
+
+### Changed
+
+- A second `index_project` call for the same project joins the running one. Calls that ask for
+  something different — `force`, or other file extensions — are rejected instead of silently
+  reporting the other run's result as their own.
+
 ## [0.1.2] - 2026-06-19
 
 ### Security
@@ -48,6 +71,7 @@ Initial public release.
 - Batched embedding during indexing for a faster initial index.
 - Cross-platform support: native prebuilds for macOS, Linux and Windows, and CRLF-safe git parsing.
 
+[0.1.3]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.0
