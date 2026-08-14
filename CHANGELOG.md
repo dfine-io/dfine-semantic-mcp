@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.3] - 2026-08-14
+## [0.2.0] - 2026-08-14
 
 ### Fixed
 
@@ -24,9 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** Node.js 22 or newer is now required. Node 20 reached end of life on 2026-04-30 and
+  the SQLite driver no longer supports it.
 - A second `index_project` call for the same project joins the running one. Calls that ask for
-  something different — `force`, or other file extensions — are rejected instead of silently
-  reporting the other run's result as their own.
+  something different — `force` in either direction, or other file extensions — are rejected
+  instead of silently reporting the other run's result as their own.
+- Dependencies raised to current: MCP SDK 1.30, better-sqlite3 13, TypeScript 7, Node types 24,
+  dlint 1.5.1, Prettier 3.9.6.
 
 ## [0.1.2] - 2026-06-19
 
@@ -71,7 +75,7 @@ Initial public release.
 - Batched embedding during indexing for a faster initial index.
 - Cross-platform support: native prebuilds for macOS, Linux and Windows, and CRLF-safe git parsing.
 
-[0.1.3]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.3
+[0.2.0]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.2.0
 [0.1.2]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.0
