@@ -15,4 +15,7 @@ data/*.db-wal
 
 # OS
 .DS_Store
+
+# Local tooling, not for the public repo
+dfine.config.json
 dlint.config.ts

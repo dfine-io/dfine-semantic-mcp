@@ -64,7 +64,9 @@ widen a single query; `index_project` coverage is controlled by its allow-listed
 | `SEMANTIC_DATA_DIR`      | `~/.dfine-semantic` | Where per-project index databases are stored                |
 
 The index is keyed by project path, so it persists across upgrades and is reused across `npx`
-runs. Delete a project's `.db` to force a clean re-index.
+runs. Run `index_project` with `force: true` for a clean re-index — deleting the
+`.db` while the server runs has no effect, since the open connection keeps
+writing to the unlinked file.
 
 ## Security
 

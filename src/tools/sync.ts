@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { chunkCode } from "../chunking/chunker.js";
 import { embedBatch } from "../embedding/engine.js";
 import {
-  type ChunkRecord,
+  type PendingChunk,
   type VectorStore,
   type FilePurgeStore,
+  type FileIndexStore,
 } from "../store/vector-store.js";
 import { scanChangedFiles, type ChangedFile } from "../utils/file-scanner.js";
 import { isWithinRoot } from "../utils/path-guard.js";
@@ -19,23 +20,19 @@ const lastSyncTime = new Map<string, number>();
 const syncInFlight = new Map<string, Promise<string | null>>();
 
 export async function reindexFile(
-  store: VectorStore,
+  store: FileIndexStore,
   relativePath: string,
   content: string,
   precomputedHash?: string
 ): Promise<boolean> {
   const hash =
     precomputedHash ?? createHash("sha256").update(content).digest("hex");
-  const existingHash = store.getFileHash(relativePath);
-  const hashUnchanged = existingHash === hash;
-  if (hashUnchanged) return false;
-
-  if (existingHash) store.deleteFileChunks(relativePath);
+  if (store.getFileHash(relativePath) === hash) return false;
 
   const codeChunks = chunkCode(content, relativePath);
   const embeddings = await embedBatch(codeChunks.map((c) => c.content));
   const batch: Array<{
-    chunk: Omit<ChunkRecord, "id">;
+    chunk: PendingChunk;
     embedding: Float32Array;
   }> = [];
   for (const chunk of codeChunks) {
@@ -43,18 +40,16 @@ export async function reindexFile(
     if (!embedding) break;
     batch.push({
       chunk: {
-        filePath: relativePath,
         lineStart: chunk.lineStart,
         lineEnd: chunk.lineEnd,
         content: chunk.content,
-        contentHash: hash,
         chunkType: chunk.type,
       },
       embedding,
     });
   }
-  store.insertChunks(batch);
-  store.setFileHash(relativePath, hash);
+  // Ab hier kein await mehr: der Schreibblock ist eine einzige Transaktion.
+  store.replaceFileChunks(relativePath, hash, batch);
   return true;
 }
 
