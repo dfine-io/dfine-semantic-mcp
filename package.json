@@ -49,18 +49,18 @@
     "prepublishOnly": "rm -rf build tsconfig.tsbuildinfo && tsc && chmod +x build/index.js"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@huggingface/transformers": "^4.3.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "better-sqlite3": "^13.0.3",
-    "ignore": "^7.0.6",
+    "ignore": "^7.0.12",
     "sqlite-vec": "^0.1.9",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@dfine-io-gmbh/dlint": "^1.5.1",
+    "@dfine-io-gmbh/dlint": "^1.5.4",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.13.3",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.9",
     "typescript": "^7.0.2"
   }
 }
