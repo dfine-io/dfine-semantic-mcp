@@ -7,6 +7,7 @@ import type {
   WindowHit,
   WindowIndex,
 } from "../store/window-index.js";
+import { indexProgress } from "./jobs.js";
 import { syncBeforeSearch } from "./sync.js";
 import {
   relativeToRoot,
@@ -225,7 +226,11 @@ export async function handleFindDuplicates(
 ): Promise<McpResponse> {
   const projectPath = validateProjectPath(args.path ?? process.cwd());
   const store = await openIndexedStore(projectPath);
-  if (!store) return unavailable("not_indexed", notIndexed(projectPath));
+  if (!store)
+    return unavailable(
+      "not_indexed",
+      notIndexed(projectPath, indexProgress(projectPath))
+    );
   if (!store.windows.enabled()) return unavailable("off", DUPLICATES_OFF);
   // The queried files must match disk before their windows are compared.
   const sync = await syncBeforeSearch(store, projectPath, ctx);

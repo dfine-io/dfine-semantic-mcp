@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { embed } from "../embedding/engine.js";
 import { openIndexedStore, type SearchHit } from "../store/vector-store.js";
+import { indexProgress } from "./jobs.js";
 import { syncBeforeSearch } from "./sync.js";
 import {
   validateProjectPath,
@@ -90,7 +91,7 @@ export async function handleSearch(
   const projectPath = validateProjectPath(args.path ?? process.cwd());
   const store = await openIndexedStore(projectPath);
   if (!store) {
-    const text = notIndexed(projectPath);
+    const text = notIndexed(projectPath, indexProgress(projectPath));
     return structuredResult(text, {
       status: "not_indexed",
       results: [],

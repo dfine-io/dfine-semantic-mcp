@@ -90,6 +90,8 @@ async function runIndex(
   const parts = [
     `Indexed ${indexed.indexed} files, ${plan.unchanged} unchanged`,
   ];
+  // A fresh index builds its windows in the first phase, so only this part confirms the switch.
+  if (args.duplicates) parts.push("duplicate search on");
   if (windowed.indexed > 0)
     parts.push(`added duplicate windows to ${windowed.indexed}`);
   if (plan.purge.length > 0) parts.push(`removed ${plan.purge.length}`);

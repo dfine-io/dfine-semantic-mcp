@@ -17,6 +17,12 @@ export function activeJob(projectPath: CanonicalPath): Job | undefined {
   return jobs.get(projectPath);
 }
 
+// A first index or a force rebuild runs while the store holds no chunks yet.
+export function indexProgress(projectPath: CanonicalPath): JobProgress | null {
+  const job = jobs.get(projectPath);
+  return job?.kind === "index" ? job.progress : null;
+}
+
 export async function withJob<T>(
   projectPath: CanonicalPath,
   job: Job,

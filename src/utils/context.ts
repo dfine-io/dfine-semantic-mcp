@@ -1,4 +1,5 @@
 import type { CanonicalPath } from "./path-guard.js";
+import type { JobProgress } from "../tools/jobs.js";
 import type { McpResponse } from "../constants.js";
 
 // What a handler needs from its request: cancel, progress, and the answers to a form it asked for.
@@ -34,7 +35,12 @@ export function structuredResult(
   return { content: [{ type: "text", text }], structuredContent: data };
 }
 
-// One answer for no store and for a store without chunks: index_project may have matched no file.
-export function notIndexed(projectPath: CanonicalPath): string {
+// One answer for no store and for a store without chunks: index_project may still run, or matched no file.
+export function notIndexed(
+  projectPath: CanonicalPath,
+  running: JobProgress | null
+): string {
+  if (running)
+    return `index_project is running for ${projectPath} (${running.done}/${running.total} files). Search again when it finishes.`;
   return `No indexed code for ${projectPath} yet. Run index_project with this path; pass extensions when the project has none of the default file types.`;
 }
