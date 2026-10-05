@@ -1,81 +1,64 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+## 0.1.4
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+- Added `find_duplicates`, off by default, to find near-identical TypeScript and JavaScript code in other files
+- Added `duplicates: true` to `index_project` to turn duplicate search on for a project; `false` turns it off
+- Added structured results to `semantic_search` and `find_duplicates`, with a status that tells "off" from "none found"
+- Added a prompt, in clients that support it, before a search re-indexes for more than about a minute
+- Added progress updates while `index_project` runs and while a search re-indexes changed files
+- Added an offer to rebuild indexes made by 0.1.3 or older in clients that support it; old results stay until then
+- Added `.mjs` files to the file types a new index covers by default
+- Added tool titles and read-only hints for MCP clients that show or use them
+- Improved indexing speed: files are embedded together instead of one at a time
+- Improved how files are split: every line is searchable, including interfaces, types and short declarations
+- Improved memory use on very long lines, such as minified files
+- Changed to MCP protocol revision 2026-07-28; clients on the 2025 revisions keep working without the prompt
+- Changed searches to check for changed files on every call, without the old 30-second pause or 1,000-file cap
+- Changed `index_project` to keep a project's file types when a call leaves out `extensions`
+- Changed the index format: restart sessions still running 0.1.3 or older after upgrading
+- Changed the model folder to `~/.dfine-semantic/models`: 0.1.4 downloads the model once more, later upgrades reuse it
+- Changed a second `index_project` call during a run to return the run's progress instead of waiting
+- Changed failed searches and index runs to return an error result instead of plain text
+- Changed `index_status` with a path to report exactly that project and to reject paths outside the allowed roots
+- Changed the working directory to no longer count as an allowed root when it is `/` or your home folder
+- Fixed a failing `git` call emptying the whole index
+- Fixed files with spaces or non-ASCII characters in their path being skipped
+- Fixed searches missing files from new folders, commits, pulls and branch switches
+- Fixed searches not re-indexing changed files of types outside the defaults, such as `.py`
+- Fixed tracked files that a nested `.gitignore` excludes being indexed
+- Fixed searches with `include` returning fewer results than `limit` when more matches existed
+- Fixed a search on a project that was never indexed creating an empty index for it
+- Fixed `index_status` failing when the data folder held an unreadable index file
+- Fixed file listing writing to the repository's git index or running its `core.fsmonitor` command
+- Fixed a failed model download breaking every search until the server restarted
+- Removed the `semantic://usage-guide` resource; its guidance now arrives as server instructions
 
-## [0.1.3] - 2026-08-14
+## 0.1.3
 
-### Fixed
+- Added `force: true` to `index_project` to discard the index and rebuild it
+- Changed the minimum Node.js version to 22
+- Changed a second `index_project` call with the same settings to join the running one
+- Fixed interrupted or overlapping index runs duplicating a file's chunks, and removed duplicates left by older versions
+- Fixed cancelling `index_project` not stopping the run
+- Fixed the MCP handshake reporting an outdated server version
 
-- An interrupted or overlapping index run no longer duplicates a file's chunks. Deleting, writing
-  and updating the hash now happen in one transaction, so a run that dies mid-file leaves the file
-  either fully re-indexed or untouched — and search stops returning every hit twice.
-- Opening a store repairs it once: duplicate chunks and chunks left without a hash entry are
-  removed, and a unique index keeps them from coming back.
-- Cancelling `index_project` now ends the run instead of letting it write on in the background.
+## 0.1.2
 
-### Added
+- Fixed tracked symlinks being able to lead outside the project
+- Changed `semantic_search` to cap the query length and accept only allow-listed `include` extensions
 
-- `index_project` accepts `force: true` to discard the stored index and rebuild it from scratch.
-  Deleting the `.db` file while the server runs never worked, because the open connection keeps
-  writing to it.
+## 0.1.1
 
-### Changed
+- Added a security policy with a private reporting channel
+- Fixed the usage guide showing a platform-specific example path
+- Fixed all known vulnerabilities in dependencies
 
-- **Breaking:** Node.js 22 or newer is now required. Node 20 reached end of life on 2026-04-30 and
-  the SQLite driver no longer supports it.
-- A second `index_project` call for the same project joins the running one. Calls that ask for
-  something different — `force` in either direction, or other file extensions — are rejected
-  instead of silently reporting the other run's result as their own.
-- Dependencies raised to current: MCP SDK 1.30, better-sqlite3 13, TypeScript 7, Node types 24,
-  dlint 1.5.1, Prettier 3.9.6.
+## 0.1.0
 
-## [0.1.2] - 2026-06-19
-
-### Security
-
-- Sandbox now resolves symlinks before the allowed-roots check and guards every file read, so a
-  tracked symlink can no longer escape the project root (hardens `SEMANTIC_ALLOWED_ROOTS`).
-
-### Changed
-
-- Stricter tool-input validation: `semantic_search` caps query length and allow-lists the
-  `include` extensions, consistent with the `index_project` extension allow-list.
-
-## [0.1.1] - 2026-06-15
-
-### Changed
-
-- Updated all dependencies to their latest versions; `npm audit` reports no known vulnerabilities.
-
-### Added
-
-- Security policy (`SECURITY.md`) with a private reporting channel.
-
-### Fixed
-
-- Use a platform-neutral example path in the usage guide.
-
-## [0.1.0] - 2026-06-15
-
-Initial public release.
-
-### Added
-
-- MCP server (stdio) for semantic codebase search over a local `sqlite-vec` vector store.
-- Code-tuned embeddings via `jinaai/jina-embeddings-v2-base-code` (768-dim), downloaded on first
-  run and cached under `~/.cache/huggingface/` — no network calls afterwards.
-- Tools `semantic_search`, `index_project`, `index_status` and the `semantic://usage-guide` resource.
-- Git-aware incremental auto-sync of changed files on search, with stale-entry reconciliation.
-- Path sandbox via `SEMANTIC_ALLOWED_ROOTS`, Zod-validated tool inputs and a file-extension allow-list.
-- Per-project index stored in a stable user directory (`~/.dfine-semantic`, override with
-  `SEMANTIC_DATA_DIR`) so it survives `npx` runs and package upgrades.
-- Batched embedding during indexing for a faster initial index.
-- Cross-platform support: native prebuilds for macOS, Linux and Windows, and CRLF-safe git parsing.
-
-[0.1.3]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.3
-[0.1.2]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.2
-[0.1.1]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.1
-[0.1.0]: https://github.com/dfine-io/dfine-semantic-mcp/releases/tag/v0.1.0
+- Added the semantic code search MCP server, which embeds code locally with a code-tuned model
+- Added `semantic_search`, `index_project` and `index_status`, plus a usage guide resource
+- Added automatic sync of changed files on search
+- Added a path sandbox through `SEMANTIC_ALLOWED_ROOTS`, validated tool inputs and a file extension allow-list
+- Added one index per project in `~/.dfine-semantic` that survives upgrades, movable with `SEMANTIC_DATA_DIR`
+- Added prebuilt native binaries for macOS, Linux and Windows

@@ -1,144 +1,125 @@
-import { readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { execSync } from "node:child_process";
-import ignore from "ignore";
-import { isWithinRoot } from "./path-guard.js";
-import {
-  MAX_FILE_SIZE,
-  GIT_TIMEOUT_MS,
-  GIT_MAX_BUFFER,
-  RENAME_MARKER_LENGTH,
-  GIT_STATUS_PREFIX_LENGTH,
-  MIN_LINE_LENGTH,
-} from "../constants.js";
+import { execFile } from "node:child_process";
+import type { Stats } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { extname, join } from "node:path";
+import { promisify } from "node:util";
+import { isWithinRoot, type CanonicalPath } from "./path-guard.js";
+import { errorMessage } from "./context.js";
+import { GIT_MAX_BUFFER, GIT_TIMEOUT_MS, MAX_FILE_SIZE } from "../constants.js";
+
+const execFileAsync = promisify(execFile);
 
 const ALWAYS_IGNORE = [
   "node_modules",
   ".next",
   "build",
   "dist",
-  ".git",
   "data",
   ".playwright-mcp",
 ];
 
-export function getFileExtension(filePath: string): string {
-  return `.${filePath.split(".").pop() ?? ""}`;
-}
+// Fixed args: no index refresh, no repo-configured fsmonitor command, NUL-separated verbatim paths.
+const LS_FILES = [
+  "-c",
+  "core.fsmonitor=false",
+  "--no-optional-locks",
+  "ls-files",
+  "-z",
+  "--exclude-standard",
+];
 
 function isIgnoredPath(filePath: string): boolean {
   return ALWAYS_IGNORE.some((dir) => filePath.startsWith(`${dir}/`));
 }
 
-export interface ScannedFile {
-  absolutePath: string;
-  relativePath: string;
-  content: string;
+export interface ProjectFile {
+  readonly relativePath: string;
+  readonly mtimeMs: number;
+  readonly size: number;
 }
 
-export function scanProject(
-  projectPath: string,
-  extensions: readonly string[]
-): ScannedFile[] {
-  const ig = loadGitignore(projectPath);
-  const extSet = new Set(extensions);
-  const files: ScannedFile[] = [];
+async function gitList(
+  projectPath: CanonicalPath,
+  mode: readonly string[]
+): Promise<string[]> {
+  const { stdout } = await execFileAsync("git", [...LS_FILES, ...mode], {
+    cwd: projectPath,
+    encoding: "utf-8",
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: GIT_MAX_BUFFER,
+  });
+  return stdout.split("\0").filter(Boolean);
+}
 
-  let filePaths: string[];
+// Root, file type and size: checked at listing and again right before every read.
+async function checkReadable(
+  projectPath: CanonicalPath,
+  relativePath: string
+): Promise<Stats> {
+  const absolutePath = join(projectPath, relativePath);
+  if (!(await isWithinRoot(projectPath, absolutePath)))
+    throw new Error(`${relativePath} resolves outside the root`);
+  const info = await stat(absolutePath);
+  if (!info.isFile() || info.size > MAX_FILE_SIZE)
+    throw new Error(`${relativePath} is no regular file within the size limit`);
+  return info;
+}
+
+function skipped(relativePath: string, error: unknown): null {
+  console.error(
+    `[dfine-semantic] Skipped ${relativePath}: ${errorMessage(error)}`
+  );
+  return null;
+}
+
+async function statFile(
+  projectPath: CanonicalPath,
+  relativePath: string
+): Promise<ProjectFile | null> {
   try {
-    const output = execSync(
-      "git ls-files --cached --others --exclude-standard",
-      {
-        cwd: projectPath,
-        encoding: "utf-8",
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_BUFFER,
-      }
-    );
-    filePaths = output.trim().split(/\r?\n/).filter(Boolean);
-  } catch {
-    console.error("[dfine-semantic] git ls-files failed, skipping project");
-    return [];
+    const info = await checkReadable(projectPath, relativePath);
+    return { relativePath, mtimeMs: info.mtimeMs, size: info.size };
+  } catch (error) {
+    // Listed by git but unsafe, gone or too large: absent, so the plan purges it.
+    return skipped(relativePath, error);
   }
+}
 
-  for (const relPath of filePaths) {
-    const ext = getFileExtension(relPath);
-    if (!extSet.has(ext)) continue;
-    if (isIgnoredPath(relPath)) continue;
-    if (ig.ignores(relPath)) continue;
-
-    const absPath = join(projectPath, relPath);
-    // Symlink guard: a tracked link must not read outside the project root.
-    if (!isWithinRoot(projectPath, absPath)) continue;
-    try {
-      const stat = statSync(absPath);
-      if (stat.size > MAX_FILE_SIZE) continue;
-      const content = readFileSync(absPath, "utf-8");
-      files.push({ absolutePath: absPath, relativePath: relPath, content });
-    } catch {
-      /* skip unreadable */
-    }
-  }
-
+// Throws when git fails: an empty list would purge the whole index.
+export async function listProjectFiles(
+  projectPath: CanonicalPath,
+  extensions: readonly string[]
+): Promise<ProjectFile[]> {
+  const [listed, trackedIgnored] = await Promise.all([
+    gitList(projectPath, ["--cached", "--others"]),
+    gitList(projectPath, ["--cached", "--ignored"]),
+  ]);
+  const ignored = new Set(trackedIgnored);
+  const wanted = new Set(extensions);
+  const candidates = [...new Set(listed)].filter(
+    (path) =>
+      wanted.has(extname(path)) && !isIgnoredPath(path) && !ignored.has(path)
+  );
+  const stats = await Promise.all(
+    candidates.map((path) => statFile(projectPath, path))
+  );
+  const files = stats.filter((file): file is ProjectFile => file !== null);
+  console.error(
+    `[dfine-semantic] Listed ${files.length} files in ${projectPath}`
+  );
   return files;
 }
 
-function loadGitignore(projectPath: string): ReturnType<typeof ignore> {
-  const ig = ignore();
+// Checks again at read time: the file may have become a symlink, a pipe or too large since listing.
+// null skips the file for this run; its index entry stays until a listing drops it.
+export async function readProjectFile(
+  projectPath: CanonicalPath,
+  relativePath: string
+): Promise<string | null> {
   try {
-    const content = readFileSync(join(projectPath, ".gitignore"), "utf-8");
-    ig.add(content);
-  } catch {
-    /* no .gitignore */
-  }
-  return ig;
-}
-
-type ChangeStatus = "modified" | "added" | "deleted";
-
-export interface ChangedFile {
-  status: ChangeStatus;
-  relativePath: string;
-}
-
-export function scanChangedFiles(
-  projectPath: string,
-  extensions: readonly string[]
-): ChangedFile[] {
-  const extSet = new Set(extensions);
-  try {
-    const output = execSync("git status --porcelain", {
-      cwd: projectPath,
-      encoding: "utf-8",
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: GIT_MAX_BUFFER,
-    });
-    if (!output.trim()) return [];
-
-    const changes: ChangedFile[] = [];
-    for (const line of output.trim().split(/\r?\n/)) {
-      if (!line || line.length < MIN_LINE_LENGTH) continue;
-      const xy = line.slice(0, 2);
-      let filePath = line.slice(GIT_STATUS_PREFIX_LENGTH);
-      const renameIdx = filePath.indexOf(" -> ");
-      if (renameIdx !== -1)
-        filePath = filePath.slice(renameIdx + RENAME_MARKER_LENGTH);
-
-      const ext = getFileExtension(filePath);
-      if (!extSet.has(ext)) continue;
-      if (isIgnoredPath(filePath)) continue;
-
-      if (xy.includes("D")) {
-        changes.push({ status: "deleted", relativePath: filePath });
-      } else {
-        changes.push({
-          status: xy.startsWith("??") ? "added" : "modified",
-          relativePath: filePath,
-        });
-      }
-    }
-    return changes;
-  } catch {
-    return [];
+    await checkReadable(projectPath, relativePath);
+    return await readFile(join(projectPath, relativePath), "utf-8");
+  } catch (error) {
+    return skipped(relativePath, error);
   }
 }

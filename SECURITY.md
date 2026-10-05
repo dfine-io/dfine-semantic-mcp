@@ -2,24 +2,26 @@
 
 ## Reporting a vulnerability
 
-Please report security issues **privately** by email to **support@dfine.io** — do not
-open public GitHub issues for security reports. We aim to acknowledge within a few
-business days and will coordinate a fix and disclosure with you.
+Please report security issues privately by email to support@dfine.io and do not open a public
+GitHub issue for them. We acknowledge reports within a few business days and coordinate the fix
+and its disclosure with you.
 
 ## Security model
 
-`@dfine-io-gmbh/semantic-mcp` is a local, stdio-based MCP server:
+`@dfine-io-gmbh/semantic-mcp` is a local MCP server that talks over stdio.
 
-- **Path sandbox** — it only reads files under the current working directory, `~/.claude`,
-  and any roots explicitly added via `SEMANTIC_ALLOWED_ROOTS`. Paths outside are rejected.
-- **Validated inputs** — every tool argument is schema-validated (Zod); file extensions are
-  allow-listed.
-- **No code execution** — it reads git-tracked files within an allowed root, embeds them, and
-  stores vectors in local SQLite. It never runs project code, and `git` is invoked with fixed
-  arguments (no shell interpolation of user input).
-- **No runtime network** — except the one-time embedding-model download from the Hugging Face Hub.
+- Path sandbox: it reads files only under the working directory, `~/.claude` and roots added with
+  `SEMANTIC_ALLOWED_ROOTS`, and rejects every other path. The working directory does not count when
+  it is `/` or the home folder.
+- Validated inputs: every tool argument is checked with Zod, and file extensions come from an
+  allow-list.
+- No code execution: it reads the files git lists inside an allowed root, embeds them and stores
+  the vectors in local SQLite. It never runs project code. Git runs with fixed arguments, and the
+  repository's `core.fsmonitor` command is disabled for those calls.
+- No runtime network: the only network access is the model download from the Hugging Face Hub
+  while the model is missing.
 
 ## Dependencies
 
-Dependencies are kept current and `npm audit` is part of our release checks. The published package
-is built JavaScript only; it ships no source maps or tooling configuration.
+We keep dependencies current and run `pnpm audit` before each release. The published package
+contains built JavaScript only, without source maps or tooling configuration.

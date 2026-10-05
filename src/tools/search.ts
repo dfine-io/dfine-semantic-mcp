@@ -1,45 +1,63 @@
 import { join } from "node:path";
+import { z } from "zod";
 import { embed } from "../embedding/engine.js";
-import { openStore } from "../store/vector-store.js";
-import { lazySync } from "./sync.js";
-import { validateProjectPath } from "../utils/path-guard.js";
-import { getFileExtension } from "../utils/file-scanner.js";
+import { openIndexedStore, type SearchHit } from "../store/vector-store.js";
+import { syncBeforeSearch } from "./sync.js";
+import {
+  validateProjectPath,
+  type CanonicalPath,
+} from "../utils/path-guard.js";
+import {
+  notIndexed,
+  structuredResult,
+  type ToolContext,
+} from "../utils/context.js";
 import {
   type McpResponse,
-  SEARCH_OVERFETCH_MULTIPLIER,
-  SEARCH_OVERFETCH_CAP,
+  DEFAULT_SEARCH_EXTENSIONS,
   HIGH_SCORE_THRESHOLD,
+  SEARCH_LIMIT_MAX,
 } from "../constants.js";
 
-const DEFAULT_SEARCH_EXTENSIONS = new Set([".ts", ".tsx"]);
+// The answer as data: clients read it from structuredContent, the model reads the text.
+export const SearchOutputSchema = z.object({
+  status: z
+    .enum(["ok", "not_indexed"])
+    .describe('"not_indexed": run index_project for this path first'),
+  results: z.array(
+    z.object({
+      file: z.string().describe("Absolute path"),
+      from: z.number().int(),
+      to: z.number().int(),
+      score: z.number(),
+      content: z.string().nullable().describe("Set with returnFullContent"),
+    })
+  ),
+  hasMore: z.boolean().describe("More matches pass the threshold"),
+  notes: z.array(z.string()).describe("Sync and index notes"),
+});
+type SearchOutput = z.infer<typeof SearchOutputSchema>;
 
 interface SearchArgs {
-  query: string;
-  path?: string;
-  limit: number;
-  threshold: number;
-  returnFullContent: boolean;
-  include?: string[];
+  readonly query: string;
+  readonly path?: string;
+  readonly limit: number;
+  readonly threshold: number;
+  readonly returnFullContent: boolean;
+  readonly include?: readonly string[];
 }
 
 interface ResponseOptions {
-  projectPath: string;
-  returnFullContent: boolean;
-  limit: number;
-  totalFiltered: number;
+  readonly projectPath: CanonicalPath;
+  readonly returnFullContent: boolean;
+  readonly hasMore: boolean;
 }
 
 function buildSearchResponse(
-  results: ReadonlyArray<{
-    file: string;
-    line: number;
-    lineEnd: number;
-    score: number;
-    content: string;
-  }>,
+  results: ReadonlyArray<SearchHit>,
   opts: ResponseOptions
 ): string {
-  const { projectPath, returnFullContent, limit, totalFiltered } = opts;
+  const { projectPath, returnFullContent, hasMore } = opts;
   const tag = (score: number) => {
     if (score >= HIGH_SCORE_THRESHOLD) return " [HIGH MATCH]";
     return "";
@@ -48,7 +66,7 @@ function buildSearchResponse(
     return results
       .map((r, i) => {
         const absPath = join(projectPath, r.file);
-        return `[${i + 1}]${tag(r.score)} ${absPath}:${r.line}-${r.lineEnd}\n${r.content}`;
+        return `[${i + 1}]${tag(r.score)} ${absPath}:${r.line}-${r.lineEnd}\n${r.content ?? ""}`;
       })
       .join("\n\n---\n\n");
   }
@@ -59,64 +77,57 @@ function buildSearchResponse(
     })
     .join("\n");
   text += `\n\n${results.length} results. Use Read tool to inspect files at the paths above.`;
-  if (totalFiltered > limit) {
-    text += `\n\nNote: Results capped at limit=${limit}. ${totalFiltered - limit} more matches available — use limit=${totalFiltered} to fetch all.`;
+  if (hasMore) {
+    text += `\n\nNote: More matches pass the threshold. Raise limit (max ${SEARCH_LIMIT_MAX}) to see them.`;
   }
   return text;
 }
 
-export async function handleSearch(args: SearchArgs): Promise<McpResponse> {
-  try {
-    const projectPath = validateProjectPath(args.path ?? process.cwd());
-    const store = openStore(projectPath);
-    const stats = store.getStats();
-    if (stats.totalChunks === 0) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Project not indexed yet. Run index_project first with path: ${projectPath}`,
-          },
-        ],
-      };
-    }
-    const syncMsg = await lazySync(store, projectPath);
-    const queryEmbedding = await embed(args.query);
-
-    const extFilter = new Set(DEFAULT_SEARCH_EXTENSIONS);
-    if (args.include) {
-      for (const ext of args.include) extFilter.add(ext);
-    }
-    const fetchLimit = Math.min(
-      args.limit * SEARCH_OVERFETCH_MULTIPLIER,
-      SEARCH_OVERFETCH_CAP
-    );
-    const raw = store.search(queryEmbedding, fetchLimit, args.threshold);
-    const filtered = raw.filter((r) => extFilter.has(getFileExtension(r.file)));
-    const results = filtered.slice(0, args.limit);
-
-    if (results.length === 0) {
-      return {
-        content: [
-          { type: "text" as const, text: "No results found above threshold." },
-        ],
-      };
-    }
-
-    let text = buildSearchResponse(results, {
-      projectPath,
-      returnFullContent: args.returnFullContent,
-      limit: args.limit,
-      totalFiltered: filtered.length,
-    });
-    if (syncMsg) text = `${syncMsg}\n\n${text}`;
-
-    return { content: [{ type: "text" as const, text }] };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[dfine-semantic] Search failed: ${message}`);
-    return {
-      content: [{ type: "text" as const, text: `Search failed: ${message}` }],
-    };
+export async function handleSearch(
+  args: SearchArgs,
+  ctx: ToolContext
+): Promise<McpResponse> {
+  const projectPath = validateProjectPath(args.path ?? process.cwd());
+  const store = await openIndexedStore(projectPath);
+  if (!store) {
+    const text = notIndexed(projectPath);
+    return structuredResult(text, {
+      status: "not_indexed",
+      results: [],
+      hasMore: false,
+      notes: [text],
+    } satisfies SearchOutput);
   }
+  // The query vector does not depend on the sync, so both run at once.
+  const [sync, queryEmbedding] = await Promise.all([
+    syncBeforeSearch(store, projectPath, ctx),
+    embed(args.query),
+  ]);
+  if (sync.kind === "ask") return sync.form;
+  const { results, hasMore } = store.search(queryEmbedding, {
+    limit: args.limit,
+    threshold: args.threshold,
+    extensions: [...DEFAULT_SEARCH_EXTENSIONS, ...(args.include ?? [])],
+    withContent: args.returnFullContent,
+  });
+  const body =
+    results.length === 0
+      ? "No results found above threshold."
+      : buildSearchResponse(results, {
+          projectPath,
+          returnFullContent: args.returnFullContent,
+          hasMore,
+        });
+  return structuredResult(sync.note ? `${sync.note}\n\n${body}` : body, {
+    status: "ok",
+    results: results.map((hit) => ({
+      file: join(projectPath, hit.file),
+      from: hit.line,
+      to: hit.lineEnd,
+      score: hit.score,
+      content: hit.content,
+    })),
+    hasMore,
+    notes: sync.note ? [sync.note] : [],
+  } satisfies SearchOutput);
 }

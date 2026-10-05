@@ -1,60 +1,107 @@
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { mkdirSync, existsSync } from "node:fs";
-import { DIMENSIONS } from "../embedding/engine.js";
-import { MS_PER_SECOND } from "../constants.js";
+import { basename, extname, join } from "node:path";
+import { access, mkdir } from "node:fs/promises";
+import type { Chunk } from "../chunking/chunker.js";
+import type { Embedded } from "../embedding/engine.js";
+import type { ProjectFile } from "../utils/file-scanner.js";
+import type { CanonicalPath } from "../utils/path-guard.js";
+import {
+  migrate,
+  parseExtensions,
+  prepareStatements,
+  scored,
+  toBlob,
+  type FileStateRow,
+  type Scored,
+  type SearchRow,
+  type Statements,
+} from "./schema.js";
+import { WindowIndex, type EmbeddedWindows } from "./window-index.js";
+import {
+  CHUNKER_VERSION,
+  DATA_DIR,
+  EXTENSIONS_KEY,
+  WINDOWER_VERSION,
+} from "../constants.js";
 
-export const DATA_DIR =
-  process.env["SEMANTIC_DATA_DIR"] ?? join(homedir(), ".dfine-semantic");
-
-const SNIPPET_MAX_LENGTH = 500;
 const DB_HASH_PREFIX_LENGTH = 12;
+// A large store migrates for seconds; other processes wait instead of failing with SQLITE_BUSY.
+const BUSY_TIMEOUT_MS = 30_000;
 
 // Singleton pool: one DB connection per project (process lifetime)
-const storePool = new Map<string, VectorStore>();
+const storePool = new Map<CanonicalPath, VectorStore>();
 
-// Pfad und Hash kommen aus den Methodenparametern — im Batch-Eintrag wuerden
-// sie ein zweites Mal gefuehrt und koennten davon abweichen.
-export interface PendingChunk {
-  lineStart: number;
-  lineEnd: number;
-  content: string;
-  chunkType: string;
+// The stat comes from the listing, the hash from the content read for this write.
+export interface FileRecord extends Pick<ProjectFile, "mtimeMs" | "size"> {
+  readonly hash: string;
 }
 
-interface SearchResult {
-  file: string;
-  line: number;
-  lineEnd: number;
-  snippet: string;
-  content: string;
-  score: number;
-  chunkType: string;
+type FileState = Omit<FileStateRow, "path">;
+
+export type SearchHit = Scored<SearchRow>;
+
+interface SearchOptions {
+  readonly limit: number;
+  readonly threshold: number;
+  readonly extensions: readonly string[];
+  readonly withContent: boolean;
 }
 
-function getDbPath(projectPath: string): string {
+interface SearchPage {
+  readonly results: readonly SearchHit[];
+  readonly hasMore: boolean;
+}
+
+export function getDbPath(projectPath: CanonicalPath): string {
   const hash = createHash("sha256")
     .update(projectPath)
     .digest("hex")
     .slice(0, DB_HASH_PREFIX_LENGTH);
-  const name = projectPath.split("/").pop() ?? "unknown";
-  return join(DATA_DIR, `${name}-${hash}.db`);
+  return join(DATA_DIR, `${basename(projectPath)}-${hash}.db`);
 }
 
-export function openStore(projectPath: string): VectorStore {
+// A pooled store stays usable after its file was deleted, so the pool counts as existing.
+export async function storeExists(
+  projectPath: CanonicalPath
+): Promise<boolean> {
+  if (storePool.has(projectPath)) return true;
+  return access(getDbPath(projectPath)).then(
+    () => true,
+    () => false
+  );
+}
+
+export async function openStore(
+  projectPath: CanonicalPath
+): Promise<VectorStore> {
+  await mkdir(DATA_DIR, { recursive: true });
+  // No await between this check and the pool write, so two callers share one connection.
   const existing = storePool.get(projectPath);
   if (existing) return existing;
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  const db = new Database(getDbPath(projectPath));
-  sqliteVec.load(db);
-  db.pragma("journal_mode = WAL"); // Non-blocking reads during writes
-  db.pragma("synchronous = NORMAL"); // Faster writes, crash-safe with WAL
-  const store = new VectorStore(db, projectPath);
+  const db = new Database(getDbPath(projectPath), { timeout: BUSY_TIMEOUT_MS });
+  try {
+    sqliteVec.load(db);
+    db.pragma("journal_mode = WAL"); // Non-blocking reads during writes
+    db.pragma("synchronous = NORMAL"); // Faster writes, crash-safe with WAL
+    migrate(db);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+  const store = new VectorStore(db);
   storePool.set(projectPath, store);
   return store;
+}
+
+// Searches need chunks; opening a never-indexed path would create an empty store index_status lists.
+export async function openIndexedStore(
+  projectPath: CanonicalPath
+): Promise<VectorStore | null> {
+  if (!(await storeExists(projectPath))) return null;
+  const store = await openStore(projectPath);
+  return store.countChunks() > 0 ? store : null;
 }
 
 // Cleanup: close all DB connections on process exit
@@ -62,218 +109,116 @@ process.on("exit", () => {
   for (const store of storePool.values()) store.close();
 });
 
-export class VectorStore {
-  constructor(
-    private db: Database.Database,
-    public projectPath: string
-  ) {
-    this.migrate();
+class VectorStore {
+  private readonly sql: Statements;
+  readonly windows: WindowIndex;
+
+  constructor(private readonly db: Database.Database) {
+    this.sql = prepareStatements(db);
+    this.windows = new WindowIndex(db, this.sql);
   }
 
-  private migrate() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS chunks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        file_path TEXT NOT NULL,
-        line_start INTEGER NOT NULL,
-        line_end INTEGER NOT NULL,
-        content TEXT NOT NULL,
-        content_hash TEXT NOT NULL,
-        chunk_type TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      CREATE TABLE IF NOT EXISTS file_hashes (
-        file_path TEXT PRIMARY KEY,
-        content_hash TEXT NOT NULL,
-        last_indexed INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
-        chunk_id INTEGER PRIMARY KEY,
-        embedding float[${DIMENSIONS}] distance_metric=cosine
-      );
-    `);
-    this.repair();
+  private dropChunks(filePath: string) {
+    this.sql.deleteVectors.run(filePath);
+    this.sql.deleteChunks.run(filePath);
+    this.windows.drop(filePath);
   }
 
-  // Altstores tragen Duplikate und Chunks ohne file_hashes-Zeile. Der Unique-
-  // Index ist die Marke: existiert er, ist dieser Store bereits geheilt.
-  private isHealed(): boolean {
-    return (
-      this.db
-        .prepare(
-          "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_chunks_unique'"
-        )
-        .get() !== undefined
-    );
-  }
-
-  private repair() {
-    if (this.isHealed()) return;
-
-    // Aufraeumen und beide Index-Wechsel in einer Transaktion: scheitert der
-    // Unique-Index, kehrt auch idx_chunks_file zurueck statt ganz zu fehlen.
-    const tx = this.db.transaction(() => {
-      // Ein zweiter Prozess kann zwischen Vorpruefung und Transaktionsbeginn
-      // repariert haben — dann ist hier nichts mehr zu tun.
-      if (this.isHealed()) return;
-      this.db.exec(`
-        CREATE TEMP TABLE doomed AS
-          SELECT id FROM chunks WHERE id NOT IN (
-            SELECT MAX(id) FROM chunks GROUP BY file_path, line_start, line_end
-          )
-          UNION
-          SELECT id FROM chunks
-          WHERE file_path NOT IN (SELECT file_path FROM file_hashes);
-        DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM doomed);
-        DELETE FROM chunks WHERE id IN (SELECT id FROM doomed);
-        DROP TABLE doomed;
-        DROP INDEX IF EXISTS idx_chunks_file;
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_unique
-          ON chunks(file_path, line_start, line_end);
-      `);
-    });
-    // immediate(): nimmt den Schreib-Lock sofort, statt ihn erst beim ersten
-    // Write zu holen — sonst laufen zwei Startvorgaenge in einen Konflikt.
-    tx.immediate();
-  }
-
-  // Delete, Insert und Hash-Update in einer Transaktion — ein Abbruch laesst
-  // die Datei entweder vollstaendig neu indiziert oder unveraendert zurueck.
+  // Delete, insert and file record in one transaction: a cancel leaves the file old or new.
   replaceFileChunks(
     filePath: string,
-    contentHash: string,
-    chunks: ReadonlyArray<{
-      chunk: PendingChunk;
-      embedding: Float32Array;
-    }>
+    file: FileRecord,
+    chunks: readonly Embedded<Chunk>[],
+    windows: EmbeddedWindows | null
   ) {
-    const deleteVec = this.db.prepare(
-      "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?)"
-    );
-    const deleteChunks = this.db.prepare(
-      "DELETE FROM chunks WHERE file_path = ?"
-    );
-    const insertChunk = this.db.prepare(`
-      INSERT INTO chunks (file_path, line_start, line_end, content, content_hash, chunk_type)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    // Use last_insert_rowid() in SQL to avoid JS bigint→float binding issue
-    const insertVec = this.db.prepare(
-      `INSERT INTO vec_chunks (chunk_id, embedding) VALUES (last_insert_rowid(), ?)`
-    );
-    const setHash = this.db.prepare(
-      "INSERT OR REPLACE INTO file_hashes (file_path, content_hash, last_indexed) VALUES (?, ?, unixepoch())"
-    );
+    const ext = extname(filePath);
     const tx = this.db.transaction(() => {
-      // Unbedingt: ein fehlender Hash-Eintrag darf das Delete nicht ueberspringen.
-      deleteVec.run(filePath);
-      deleteChunks.run(filePath);
-      for (const { chunk, embedding } of chunks) {
-        insertChunk.run(
+      this.dropChunks(filePath);
+      for (const { item, embedding } of chunks) {
+        this.sql.insertChunk.run(
           filePath,
-          chunk.lineStart,
-          chunk.lineEnd,
-          chunk.content,
-          contentHash,
-          chunk.chunkType
+          item.lineStart,
+          item.lineEnd,
+          item.part,
+          item.content
         );
-        insertVec.run(Buffer.from(embedding.buffer));
+        this.sql.insertVector.run(ext, toBlob(embedding));
       }
-      setHash.run(filePath, contentHash);
+      if (windows) this.windows.insert(filePath, windows);
+      this.sql.writeFile.run(
+        filePath,
+        file.hash,
+        file.mtimeMs,
+        file.size,
+        CHUNKER_VERSION,
+        windows ? WINDOWER_VERSION : null
+      );
     });
     tx();
   }
 
-  search(
-    queryEmbedding: Float32Array,
-    limit: number,
-    threshold: number
-  ): SearchResult[] {
-    // sqlite-vec cosine distance: 0 = identical, 2 = opposite
-    // cosine_similarity = 1 - (cosine_distance / 2)
-    const rows = this.db
-      .prepare(
-        `
-      SELECT c.file_path, c.line_start, c.line_end, c.content, c.chunk_type, v.distance
-      FROM vec_chunks v
-      JOIN chunks c ON c.id = v.chunk_id
-      WHERE v.embedding MATCH ?
-        AND k = ?
-    `
-      )
-      .all(Buffer.from(queryEmbedding.buffer), limit) as Array<{
-      file_path: string;
-      line_start: number;
-      line_end: number;
-      content: string;
-      chunk_type: string;
-      distance: number;
-    }>;
-
-    return rows
-      .filter((r) => 1 - r.distance >= threshold)
-      .map((r) => ({
-        file: r.file_path,
-        line: r.line_start,
-        lineEnd: r.line_end,
-        snippet: r.content.slice(0, SNIPPET_MAX_LENGTH),
-        content: r.content,
-        score: Math.round((1 - r.distance) * MS_PER_SECOND) / MS_PER_SECOND,
-        chunkType: r.chunk_type,
-      }));
-  }
-
-  getFileHash(filePath: string): string | null {
-    const row = this.db
-      .prepare("SELECT content_hash FROM file_hashes WHERE file_path = ?")
-      .get(filePath) as { content_hash: string } | undefined;
-    return row?.content_hash ?? null;
-  }
-
-  deleteFileChunks(filePath: string) {
-    // Drei Autocommits liessen ein Abbruch Chunks ohne Vektoren zuruecklassen,
-    // die kein Folgelauf mehr anfasst, weil der Hash-Eintrag noch steht.
+  // Same content, new stat (touch, checkout): store the stats so the next sync skips the reads.
+  setFileStats(files: readonly ProjectFile[]) {
     const tx = this.db.transaction(() => {
-      this.db
-        .prepare(
-          "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT id FROM chunks WHERE file_path = ?)"
-        )
-        .run(filePath);
-      this.db.prepare("DELETE FROM chunks WHERE file_path = ?").run(filePath);
-      this.db
-        .prepare("DELETE FROM file_hashes WHERE file_path = ?")
-        .run(filePath);
+      for (const file of files)
+        this.sql.writeStat.run(file.mtimeMs, file.size, file.relativePath);
     });
     tx();
   }
 
-  getAllFilePaths(): string[] {
-    const rows = this.db
-      .prepare("SELECT file_path FROM file_hashes")
-      .all() as Array<{ file_path: string }>;
-    return rows.map((r) => r.file_path);
+  deleteFiles(filePaths: readonly string[]) {
+    const tx = this.db.transaction(() => {
+      for (const filePath of filePaths) {
+        this.dropChunks(filePath);
+        this.sql.deleteFile.run(filePath);
+      }
+    });
+    tx();
   }
 
-  getStats() {
-    const chunks = this.db
-      .prepare("SELECT COUNT(*) as count FROM chunks")
-      .get() as { count: number };
-    const files = this.db
-      .prepare("SELECT COUNT(*) as count FROM file_hashes")
-      .get() as { count: number };
-    return { totalChunks: chunks.count, totalFiles: files.count };
+  getFileStates(): Map<string, FileState> {
+    return new Map(
+      this.sql.fileStates.all().map(({ path, ...state }) => [path, state])
+    );
   }
 
-  // Reset ueber die gepoolte Connection, nicht ueber das Dateisystem: eine
-  // geloeschte .db bleibt beschreibbar, solange storePool den Deskriptor haelt.
+  getIndexedExtensions(): readonly string[] {
+    return parseExtensions(this.sql.readMeta.get(EXTENSIONS_KEY));
+  }
+
+  setIndexedExtensions(extensions: readonly string[]) {
+    this.sql.writeMeta.run(EXTENSIONS_KEY, JSON.stringify(extensions));
+  }
+
+  // One row past the limit tells whether more matches exist.
+  search(queryEmbedding: Float32Array, options: SearchOptions): SearchPage {
+    const rows = this.sql.search.all(
+      options.withContent ? 1 : 0,
+      toBlob(queryEmbedding),
+      options.limit + 1,
+      JSON.stringify(options.extensions)
+    );
+    const hits = scored(rows, options.threshold);
+    return {
+      results: hits.slice(0, options.limit),
+      hasMore: hits.length > options.limit,
+    };
+  }
+
+  countChunks(): number {
+    return this.sql.countChunks.get() ?? 0;
+  }
+
+  // Reset through the pooled connection: a deleted .db stays writable while the pool holds it.
   clear() {
     const tx = this.db.transaction(() => {
-      // Unqualifiziert, damit auch verwaiste Vektoren ohne Chunk-Zeile fallen.
+      // Unqualified, so orphaned vectors without a chunk row go too.
       this.db.exec(`
         DELETE FROM vec_chunks;
         DELETE FROM chunks;
         DELETE FROM file_hashes;
       `);
+      this.windows.clearAll();
     });
     tx();
   }
@@ -283,14 +228,13 @@ export class VectorStore {
   }
 }
 
-// Narrow view for callers that only reconcile stored paths (purge flows).
-export type FilePurgeStore = Pick<
-  VectorStore,
-  "getAllFilePaths" | "deleteFileChunks"
->;
-
-// Narrow view for the reindex path: read the stored hash, replace the file.
-export type FileIndexStore = Pick<
-  VectorStore,
-  "getFileHash" | "replaceFileChunks"
->;
+// Narrow views: each flow sees only the store methods it uses.
+export type PlanStore = Pick<VectorStore, "getFileStates" | "setFileStats">;
+export type ApplyStore = Pick<VectorStore, "replaceFileChunks"> & {
+  readonly windows: Pick<WindowIndex, "rebuild">;
+};
+export type SyncStore = PlanStore &
+  ApplyStore &
+  Pick<VectorStore, "deleteFiles" | "getIndexedExtensions"> & {
+    readonly windows: Pick<WindowIndex, "enabled">;
+  };
