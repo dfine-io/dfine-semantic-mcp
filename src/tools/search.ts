@@ -35,7 +35,7 @@ export const SearchOutputSchema = z.object({
     })
   ),
   hasMore: z.boolean().describe("More matches pass the threshold"),
-  notes: z.array(z.string()).describe("Sync and index notes"),
+  notes: z.array(z.string()).describe("Sync, index and limit notes"),
 });
 type SearchOutput = z.infer<typeof SearchOutputSchema>;
 
@@ -47,6 +47,9 @@ interface SearchArgs {
   readonly returnFullContent: boolean;
   readonly include?: readonly string[];
 }
+
+// Text and notes say it alike: some clients show the model only the structured answer.
+const MORE_MATCHES = `More matches pass the threshold. Raise limit (max ${SEARCH_LIMIT_MAX}) to see them.`;
 
 interface ResponseOptions {
   readonly projectPath: CanonicalPath;
@@ -79,7 +82,7 @@ function buildSearchResponse(
     .join("\n");
   text += `\n\n${results.length} results. Use Read tool to inspect files at the paths above.`;
   if (hasMore) {
-    text += `\n\nNote: More matches pass the threshold. Raise limit (max ${SEARCH_LIMIT_MAX}) to see them.`;
+    text += `\n\nNote: ${MORE_MATCHES}`;
   }
   return text;
 }
@@ -129,6 +132,9 @@ export async function handleSearch(
       content: hit.content,
     })),
     hasMore,
-    notes: sync.note ? [sync.note] : [],
+    notes: [
+      ...(sync.note ? [sync.note] : []),
+      ...(hasMore ? [MORE_MATCHES] : []),
+    ],
   } satisfies SearchOutput);
 }

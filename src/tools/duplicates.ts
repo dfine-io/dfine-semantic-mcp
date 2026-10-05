@@ -61,7 +61,9 @@ export const DuplicatesOutputSchema = z.object({
     .describe("Candidates, best first per file"),
   notes: z
     .array(z.string())
-    .describe("Sync notes and why a file or exclude entry has no pairs"),
+    .describe(
+      "Sync notes, why a file or exclude entry has no pairs, and how to read the pairs"
+    ),
 });
 type DuplicatesOutput = z.infer<typeof DuplicatesOutputSchema>;
 
@@ -270,9 +272,10 @@ export async function handleFindDuplicates(
   console.error(
     `[dfine-semantic] find_duplicates: ${pairs.length} pairs for ${args.files.length} files in ${projectPath}`
   );
-  lines.push(
-    `${pairs.length} pairs in ${filesWithPairs} of ${args.files.length} files. Candidates only: read both ranges before merging anything.`
-  );
+  // Text and notes end alike: some clients show the model only the structured answer.
+  const summary = `${pairs.length} pairs in ${filesWithPairs} of ${args.files.length} files. Candidates only: read both ranges before merging anything.`;
+  notes.push(summary);
+  lines.push(summary);
   return structuredResult(lines.join("\n"), {
     status: "ok",
     pairs,
