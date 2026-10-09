@@ -2,11 +2,8 @@ import { setImmediate } from "node:timers/promises";
 import { z } from "zod";
 import { isWindowedPath } from "../chunking/windows.js";
 import { openIndexedStore } from "../store/vector-store.js";
-import type {
-  StoredWindow,
-  WindowHit,
-  WindowIndex,
-} from "../store/window-index.js";
+import type { StoredWindow, WindowIndex } from "../store/window-index.js";
+import { merge, type Pair, type Range } from "./duplicate-pairs.js";
 import { indexProgress } from "./jobs.js";
 import { syncBeforeSearch } from "./sync.js";
 import {
@@ -19,7 +16,7 @@ import {
   structuredResult,
   type ToolContext,
 } from "../utils/context.js";
-import { type McpResponse, WINDOW_LINES } from "../constants.js";
+import type { McpResponse } from "../constants.js";
 
 // Identical copies fill k first; four times the limit leaves room for the real twins.
 const K_PER_LIMIT = 4;
@@ -27,6 +24,8 @@ const MIN_K = 20;
 // About 30 s of neighbour queries: 50 average files fit, 50 huge files stop early.
 const WINDOW_BUDGET = 1_000;
 const SCORE_DIGITS = 3;
+// Measured: from 0.88 nearly every pair was a real copy; below it a reader decides.
+export const LIKELY_SCORE = 0.88;
 const WHOLE_FILE_END = Number.MAX_SAFE_INTEGER;
 // dotAll: a line break inside a path stays part of the path instead of failing the match.
 const TARGET_SPEC = /^(.*?)(?::(\d+)(?:-(\d+))?)?$/s;
@@ -46,6 +45,11 @@ const DuplicatePairSchema = z.object({
   otherFrom: z.number().int(),
   otherTo: z.number().int(),
   score: z.number(),
+  band: z
+    .enum(["likely", "check"])
+    .describe(
+      `"likely" from ${LIKELY_SCORE}, "check" below: read the likely pairs first`
+    ),
 });
 type DuplicatePair = z.infer<typeof DuplicatePairSchema>;
 
@@ -75,11 +79,6 @@ interface DuplicateArgs {
   readonly exclude: readonly string[];
 }
 
-interface Range {
-  readonly from: number;
-  readonly to: number;
-}
-
 interface Target extends Range {
   readonly kind: "target";
   readonly file: string;
@@ -88,10 +87,6 @@ interface Target extends Range {
 interface Skip {
   readonly kind: "skip";
   readonly reason: string;
-}
-
-interface Pair extends Range {
-  readonly other: WindowHit;
 }
 
 // One call's shared state: the window budget shrinks with every queried file.
@@ -130,38 +125,6 @@ const skip = (reason: string): Skip => ({
   reason: `skipped (${reason})`,
 });
 
-const near = (a: Range, b: Range): boolean =>
-  a.from <= b.to + WINDOW_LINES && a.to >= b.from - WINDOW_LINES;
-
-// A hit joins any pair of the same other file that is near on both sides, so two copies stay two.
-function merge(hits: readonly Pair[]): Pair[] {
-  const out: Pair[] = [];
-  for (const hit of [...hits].sort((a, b) => a.from - b.from)) {
-    const at = out.findIndex(
-      (pair) =>
-        pair.other.file === hit.other.file &&
-        near(pair, hit) &&
-        near(pair.other, hit.other)
-    );
-    const pair = out[at];
-    if (!pair) {
-      out.push(hit);
-      continue;
-    }
-    out[at] = {
-      from: Math.min(pair.from, hit.from),
-      to: Math.max(pair.to, hit.to),
-      other: {
-        file: pair.other.file,
-        from: Math.min(pair.other.from, hit.other.from),
-        to: Math.max(pair.other.to, hit.other.to),
-        score: Math.max(pair.other.score, hit.other.score),
-      },
-    };
-  }
-  return out;
-}
-
 // Yields before every query, so a cancel and other tool calls get through a long run.
 async function pairsFor(
   run: Run,
@@ -173,12 +136,7 @@ async function pairsFor(
   for (const stored of windows) {
     run.signal.throwIfAborted();
     await setImmediate();
-    for (const other of run.index.nearest(
-      stored.id,
-      file,
-      k,
-      run.args.threshold
-    ))
+    for (const other of run.index.nearest(stored, file, k, run.args.threshold))
       if (!run.prefixes.some((p) => `${other.file}/`.startsWith(p)))
         hits.push({ from: stored.from, to: stored.to, other });
   }
@@ -190,7 +148,7 @@ async function pairsFor(
 const note = (text: string): Answer => ({ kind: "note", text });
 
 const pairLine = (pair: DuplicatePair): string =>
-  `${pair.file}:${pair.from}-${pair.to} <-> ${pair.otherFile}:${pair.otherFrom}-${pair.otherTo} ${pair.score.toFixed(SCORE_DIGITS)}`;
+  `${pair.file}:${pair.from}-${pair.to} <-> ${pair.otherFile}:${pair.otherFrom}-${pair.otherTo} ${pair.score.toFixed(SCORE_DIGITS)} ${pair.band}`;
 
 async function answerFor(run: Run, spec: string): Promise<Answer> {
   const target = parseTarget(spec, run.root);
@@ -210,15 +168,19 @@ async function answerFor(run: Run, spec: string): Promise<Answer> {
     return note(`${spec}: no pair at or above ${run.args.threshold}`);
   return {
     kind: "pairs",
-    pairs: pairs.map((pair) => ({
-      file: target.file,
-      from: pair.from,
-      to: pair.to,
-      otherFile: pair.other.file,
-      otherFrom: pair.other.from,
-      otherTo: pair.other.to,
-      score: Number(pair.other.score.toFixed(SCORE_DIGITS)),
-    })),
+    pairs: pairs.map((pair) => {
+      const score = Number(pair.other.score.toFixed(SCORE_DIGITS));
+      return {
+        file: target.file,
+        from: pair.from,
+        to: pair.to,
+        otherFile: pair.other.file,
+        otherFrom: pair.other.from,
+        otherTo: pair.other.to,
+        score,
+        band: score >= LIKELY_SCORE ? "likely" : "check",
+      };
+    }),
   };
 }
 
@@ -273,7 +235,7 @@ export async function handleFindDuplicates(
     `[dfine-semantic] find_duplicates: ${pairs.length} pairs for ${args.files.length} files in ${projectPath}`
   );
   // Text and notes end alike: some clients show the model only the structured answer.
-  const summary = `${pairs.length} pairs in ${filesWithPairs} of ${args.files.length} files. Candidates only: read both ranges before merging anything.`;
+  const summary = `${pairs.length} pairs in ${filesWithPairs} of ${args.files.length} files. Candidates only: read both ranges, likely pairs first, before merging anything.`;
   notes.push(summary);
   lines.push(summary);
   return structuredResult(lines.join("\n"), {

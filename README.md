@@ -53,7 +53,7 @@ The server sends short usage instructions to the client when it connects.
 | `semantic_search` | Natural-language query, returns ranked `file:line` references            |
 | `index_project`   | Index or refresh a project root, embedding only what changed             |
 | `index_status`    | List indexed projects with file, chunk and size counts                   |
-| `find_duplicates` | List near-identical code for files or line ranges (opt-in, see below)    |
+| `find_duplicates` | List similar code for files or line ranges (opt-in, see below)          |
 
 `semantic_search` and `find_duplicates` also return their results as structured data, described by
 each tool's output schema. Its `status` field tells an agent that duplicate search is `off` for a
@@ -70,19 +70,26 @@ windows, and building that index takes time and disk space, so projects that nev
 for it.
 
 1. Ask your agent to run `index_project` with `duplicates: true` once for the project. On an
-   indexed repository with about 1,400 TypeScript files, this takes about 45 minutes and 70 MB. A
+   indexed repository with about 1,400 TypeScript files, this takes about 50 minutes and 75 MB. A
    project without a search index yet needs about 35 minutes more.
 2. Ask for duplicates of files or line ranges, for example `src/a.ts:10-40`, and your agent calls
    `find_duplicates`. Searches and index runs keep the windows of edited files current. When a
    result says windows are missing, run `index_project` again.
 3. Run `index_project` with `duplicates: false` to switch it off and delete the duplicate index.
 
-Each result pairs a range of your file with a similar range in another file, plus a similarity
-score. Read both ranges before you merge anything. At the default threshold of 0.88, the tool found
-about 40% of the real duplicates in a measured TypeScript project; a higher threshold returns fewer
-false pairs. It covers `.ts`, `.tsx`, `.js`, `.jsx` and `.mjs` files and skips tests, specs and
-`.d.ts` files. Pass `exclude` with folders such as `src/generated` to leave generated or vendored
-code out.
+Each result pairs a range of your file with a similar range in another file. It comes with a
+similarity score and a band: `likely` from 0.88, `check` from 0.80 up to 0.88. The tool only lists
+candidates, and your agent reads both ranges before it merges anything. The tool description tells
+the agent what counts as a duplicate: both ranges follow the same rule, or a block repeats with only
+names, data or texts swapped. A shared call or a short idiom does not count.
+
+In a measured TypeScript project with about 1,400 files, the default threshold of 0.80 listed about
+three in four of the real duplicates, and about half scored 0.88 or more. Short functions get an
+entry of their own, so a word-for-word copy of a five-line function is found as well. Pass
+`threshold: 0.88` to list only likely pairs.
+
+The tool covers `.ts`, `.tsx`, `.js`, `.jsx` and `.mjs` files and skips tests, specs and `.d.ts`
+files. Pass `exclude` with folders such as `src/generated` to leave generated or vendored code out.
 
 ## Configuration
 
@@ -93,6 +100,14 @@ code out.
 
 The working directory counts as a root unless it is `/` or your home folder. Indexes are keyed by
 project path and survive upgrades. Run `index_project` with `force: true` for a clean rebuild.
+
+## Upgrading from 0.1.4
+
+- In projects with duplicate search on, run `index_project` once. It rebuilds the duplicate index
+  with the new entries for short functions, which takes about as long as the first build. Until
+  then `find_duplicates` keeps working with the old index.
+- `find_duplicates` now lists pairs from 0.80 instead of 0.88. Pass `threshold: 0.88` for the
+  shorter list.
 
 ## Upgrading from 0.1.3 or older
 

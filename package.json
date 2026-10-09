@@ -1,6 +1,6 @@
 {
   "name": "@dfine-io-gmbh/semantic-mcp",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Semantic code search MCP server: embeds a project into a local SQLite vector store for natural-language queries.",
   "license": "MIT",
   "author": "dfine.io <support@dfine.io>",

@@ -24,7 +24,7 @@ export const DATA_DIR =
 // Bump when chunk boundaries change: files from an older chunker count as stale.
 export const CHUNKER_VERSION = 2;
 // Bump when window rules change: projects with duplicate search rebuild their windows.
-export const WINDOWER_VERSION = 1;
+export const WINDOWER_VERSION = 2;
 // Hard cap near 550 tokens of code: bounds the memory of one embedding batch.
 export const MAX_CHUNK_CHARS = 2_000;
 // Measured on TypeScript: 10 code lines per window; hits closer than one window are one block.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- Improved `find_duplicates` to find a short function copied word for word into another file
+- Changed `find_duplicates` to list pairs from a similarity of 0.80, each marked "likely" (0.88 and up) or "check"
+- Added guidance for agents on which pairs count as duplicates and which only look alike
+- Changed: in projects with duplicate search on, run `index_project` once to rebuild the duplicate index
+
 ## 0.1.4
 
 - Added `find_duplicates`, off by default, to find near-identical TypeScript and JavaScript code in other files

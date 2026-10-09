@@ -10,9 +10,9 @@ import type { ProjectFile } from "../utils/file-scanner.js";
 import type { CanonicalPath } from "../utils/path-guard.js";
 import type { ToolContext } from "../utils/context.js";
 
-// Pooled fp32: about 1.5 s per file for chunks; windows add 15.2 per file at 8.3/s (dfine-review).
+// Pooled fp32 on a 1,400-file TS repo: about 1.5 s per file for chunks; 16.2 windows per file at 8.3/s.
 const EST_SECONDS_PER_FILE = 1.5;
-const EST_WINDOW_SECONDS_PER_FILE = 1.8;
+const EST_WINDOW_SECONDS_PER_FILE = 2;
 const SYNC_PROMPT_SECONDS = 60;
 const SECONDS_PER_MINUTE = 60;
 
@@ -190,7 +190,7 @@ export function syncNote(
     );
   if (plan.unwindowed.length > 0)
     notes.push(
-      `[duplicates] ${plan.unwindowed.length} files have no duplicate windows yet. Run index_project to add them.`
+      `[duplicates] ${plan.unwindowed.length} files have missing or outdated duplicate windows. Run index_project to build them.`
     );
   return notes.length > 0 ? notes.join("\n") : null;
 }

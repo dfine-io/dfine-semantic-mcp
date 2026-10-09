@@ -1,3 +1,8 @@
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  type ServerContext,
+} from "@modelcontextprotocol/server";
+import { z } from "zod";
 import type { CanonicalPath } from "./path-guard.js";
 import type { JobProgress } from "../tools/jobs.js";
 import type { McpResponse } from "../constants.js";
@@ -17,6 +22,52 @@ export interface ToolContext {
 // The answers a retried call carries, keyed like the form's requests; undefined on the first call.
 interface FormChannel {
   readonly answers: Record<string, unknown> | undefined;
+}
+
+// The SDK validates the request envelope but types it as {}: read the one member the form needs.
+const EnvelopeSchema = z.object({
+  [CLIENT_CAPABILITIES_META_KEY]: z.object({
+    elicitation: z
+      .object({ form: z.unknown(), url: z.unknown() })
+      .partial()
+      .optional(),
+  }),
+});
+
+// Forms ride input_required, which needs the 2026-07-28 envelope; a 2025-era client gets the default.
+// Same rule as the SDK's gate: a bare elicitation capability means forms.
+function canShowForm(ctx: ServerContext): boolean {
+  const parsed = EnvelopeSchema.safeParse(ctx.mcpReq.envelope);
+  const elicitation = parsed.success
+    ? parsed.data[CLIENT_CAPABILITIES_META_KEY].elicitation
+    : undefined;
+  return (
+    elicitation !== undefined &&
+    (elicitation.form !== undefined || elicitation.url === undefined)
+  );
+}
+
+// Maps the SDK request onto what the handlers need, so they stay free of SDK types.
+export function toolContext(ctx: ServerContext): ToolContext {
+  const token = ctx.mcpReq._meta?.progressToken;
+  return {
+    signal: ctx.mcpReq.signal,
+    progress: async (done, total, message) => {
+      if (token === undefined) return;
+      // A closed client must not fail the run.
+      await ctx.mcpReq
+        .notify({
+          method: "notifications/progress",
+          params: { progressToken: token, progress: done, total, message },
+        })
+        .catch((error: unknown) => {
+          console.error(
+            `[dfine-semantic] Progress not sent: ${errorMessage(error)}`
+          );
+        });
+    },
+    form: canShowForm(ctx) ? { answers: ctx.mcpReq.inputResponses } : null,
+  };
 }
 
 export function errorMessage(error: unknown): string {

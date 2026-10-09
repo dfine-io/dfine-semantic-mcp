@@ -2,7 +2,8 @@ import { MAX_CHUNK_CHARS } from "../constants.js";
 
 // Embedding cost grows with chunk length, so short chunks index faster and match more precisely.
 const TARGET_CHUNK_CHARS = 1_000;
-const DECLARATION =
+// A top-level declaration: chunks cut before one, duplicate units start at one.
+export const DECLARATION =
   /^(export\s+)?(default\s+)?(async\s+)?(abstract\s+)?(function|class|interface|type|enum|const|let|var)\b/;
 const CLOSING = /^[}\])]/;
 const COMMENT_OR_DECORATOR = /^(\/\/|\/\*|\*|@)/;

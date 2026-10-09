@@ -9,7 +9,9 @@ import {
 } from "../constants.js";
 
 // 2 = stat, chunker and window version per file, chunk parts, extensions on vectors, windows.
-const SCHEMA_VERSION = 2;
+// 3 = each window carries its kind: a sliding window or a declaration unit.
+const SCHEMA_VERSION = 3;
+const KINDLESS_VERSION = 2;
 const META_UPSERT = "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)";
 
 // One file_hashes row under the names the reconcile reads.
@@ -88,13 +90,16 @@ const VEC_TABLE = `
     ext TEXT,
     embedding float[${DIMENSIONS}] distance_metric=cosine
   );`;
+// Every window written without a kind, by an older store or an older server, is a sliding window.
+const WINDOW_KIND = "kind TEXT NOT NULL DEFAULT 'window'";
 // Duplicate-search windows: line ranges here, vectors with their file path in vec_windows.
 const WINDOW_TABLES = `
   CREATE TABLE windows (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_path TEXT NOT NULL,
     line_from INTEGER NOT NULL,
-    line_to INTEGER NOT NULL
+    line_to INTEGER NOT NULL,
+    ${WINDOW_KIND}
   );
   CREATE INDEX idx_windows_file ON windows(file_path);
   CREATE VIRTUAL TABLE vec_windows USING vec0(
@@ -163,6 +168,17 @@ function inferExtensions(db: Database.Database): void {
   );
 }
 
+// A store without a chunks table is new; one with chunks but no version predates 0.1.4.
+function buildSchema(db: Database.Database): void {
+  const legacy =
+    db
+      .prepare<[], number>("SELECT 1 FROM sqlite_master WHERE name = 'chunks'")
+      .pluck()
+      .get() !== undefined;
+  db.exec(legacy ? LEGACY : FRESH);
+  if (legacy) inferExtensions(db);
+}
+
 export function migrate(db: Database.Database): void {
   if (version(db) >= SCHEMA_VERSION) return;
   db.function("file_ext", { deterministic: true }, (path: unknown) =>
@@ -170,16 +186,11 @@ export function migrate(db: Database.Database): void {
   );
   const tx = db.transaction(() => {
     // Re-check inside the lock: another process may have migrated meanwhile.
-    if (version(db) >= SCHEMA_VERSION) return;
-    const legacy =
-      db
-        .prepare<[], number>(
-          "SELECT 1 FROM sqlite_master WHERE name = 'chunks'"
-        )
-        .pluck()
-        .get() !== undefined;
-    db.exec(legacy ? LEGACY : FRESH);
-    if (legacy) inferExtensions(db);
+    const current = version(db);
+    if (current >= SCHEMA_VERSION) return;
+    if (current === KINDLESS_VERSION)
+      db.exec(`ALTER TABLE windows ADD COLUMN ${WINDOW_KIND};`);
+    else buildSchema(db);
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   });
   // immediate() takes the write lock up front, so two starting processes cannot interleave.

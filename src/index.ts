@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import {
-  CLIENT_CAPABILITIES_META_KEY,
   McpServer,
   type ServerContext,
   type ToolAnnotations,
@@ -14,8 +13,13 @@ import { handleIndexStatus } from "./tools/index-status.js";
 import {
   DuplicatesOutputSchema,
   handleFindDuplicates,
+  LIKELY_SCORE,
 } from "./tools/duplicates.js";
-import { errorMessage, type ToolContext } from "./utils/context.js";
+import {
+  errorMessage,
+  toolContext,
+  type ToolContext,
+} from "./utils/context.js";
 import {
   ALLOWED_EXTENSIONS,
   ExtensionListSchema,
@@ -29,9 +33,8 @@ import {
 
 // Longest path most file systems allow; anything longer is no path.
 const PATH_MAX_LENGTH = 4_096;
-// 0.88 found about 40% of real duplicates in the measured TypeScript repo; below 0.8 it floods.
-const DUPLICATE_THRESHOLD_DEFAULT = 0.88;
-const DUPLICATE_THRESHOLD_MIN = 0.8;
+// Floor and default: 0.8 listed 3 of 4 real duplicates in the measured repo; the agent checks each.
+const DUPLICATE_THRESHOLD = 0.8;
 const DUPLICATE_LIMIT_DEFAULT = 5;
 const DUPLICATE_LIMIT_MAX = 20;
 const DUPLICATE_FILES_MAX = 50;
@@ -50,52 +53,6 @@ const INSTRUCTIONS = [
   "- Expect the first index or search to download the model (~640 MB) once.",
   "- Use find_duplicates in reviews and refactors - it is off until index_project duplicates: true.",
 ].join("\n");
-
-// The SDK validates the request envelope but types it as {}: read the one member the form needs.
-const EnvelopeSchema = z.object({
-  [CLIENT_CAPABILITIES_META_KEY]: z.object({
-    elicitation: z
-      .object({ form: z.unknown(), url: z.unknown() })
-      .partial()
-      .optional(),
-  }),
-});
-
-// Forms ride input_required, which needs the 2026-07-28 envelope; a 2025-era client gets the default.
-// Same rule as the SDK's gate: a bare elicitation capability means forms.
-function canShowForm(ctx: ServerContext): boolean {
-  const parsed = EnvelopeSchema.safeParse(ctx.mcpReq.envelope);
-  const elicitation = parsed.success
-    ? parsed.data[CLIENT_CAPABILITIES_META_KEY].elicitation
-    : undefined;
-  return (
-    elicitation !== undefined &&
-    (elicitation.form !== undefined || elicitation.url === undefined)
-  );
-}
-
-// Maps the SDK request onto what the handlers need, so they stay free of SDK types.
-function toolContext(ctx: ServerContext): ToolContext {
-  const token = ctx.mcpReq._meta?.progressToken;
-  return {
-    signal: ctx.mcpReq.signal,
-    progress: async (done, total, message) => {
-      if (token === undefined) return;
-      // A closed client must not fail the run.
-      await ctx.mcpReq
-        .notify({
-          method: "notifications/progress",
-          params: { progressToken: token, progress: done, total, message },
-        })
-        .catch((error: unknown) => {
-          console.error(
-            `[dfine-semantic] Progress not sent: ${errorMessage(error)}`
-          );
-        });
-    },
-    form: canShowForm(ctx) ? { answers: ctx.mcpReq.inputResponses } : null,
-  };
-}
 
 // Every failure reaches stderr once; the rethrow becomes an error result in the SDK.
 function logged<A, R>(
@@ -169,11 +126,11 @@ const DuplicatesInputSchema = z.object({
   path: optionalRoot,
   threshold: z
     .number()
-    .min(DUPLICATE_THRESHOLD_MIN)
+    .min(DUPLICATE_THRESHOLD)
     .max(1)
-    .default(DUPLICATE_THRESHOLD_DEFAULT)
+    .default(DUPLICATE_THRESHOLD)
     .describe(
-      "Min similarity - raise to 0.92 for fewer false pairs, lower for more recall"
+      `Min similarity - raise it to ${LIKELY_SCORE} to list only likely pairs`
     ),
   limit: z
     .number()
@@ -275,7 +232,10 @@ function createServer(): McpServer {
       description: [
         "List code in other files that nearly matches the given files or line ranges.",
         'Use it in reviews and refactors - pass changed line ranges ("src/a.ts:10-40") for sharper pairs.',
-        "Treat every pair as a candidate - read both ranges before you call it a duplicate.",
+        'Treat every pair as a candidate - read both ranges, "likely" pairs before "check" pairs.',
+        "Call a pair a duplicate when both ranges implement the same rule or behavior.",
+        "Call it a duplicate too when a block repeats with only names, data or texts swapped.",
+        "Call it distinct when only one call or a short idiom matches, or one range calls the other.",
         "Expect it to be off per project - ask the user before you turn it on.",
         "Turn it on with index_project duplicates: true - the first build can take over an hour on large projects.",
         `Covers ${WINDOWED_EXTENSIONS.join(", ")} files; skips tests, specs and .d.ts files.`,
