@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- Fixed `find_duplicates` asking to index a project for files it never covers, such as C++ or CSS: it now names the reason
+
 ## 0.1.5
 
 - Improved `find_duplicates` to find a short function copied word for word into another file

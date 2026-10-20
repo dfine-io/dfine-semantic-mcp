@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { z } from "zod";
-import { isWindowedPath } from "../chunking/windows.js";
+import { windowSkip, type WindowSkip } from "../chunking/windows.js";
 import { openIndexedStore } from "../store/vector-store.js";
 import type { StoredWindow, WindowIndex } from "../store/window-index.js";
 import { merge, type Pair, type Range } from "./duplicate-pairs.js";
@@ -16,7 +16,7 @@ import {
   structuredResult,
   type ToolContext,
 } from "../utils/context.js";
-import type { McpResponse } from "../constants.js";
+import { type McpResponse, WINDOWED_EXTENSIONS } from "../constants.js";
 
 // Identical copies fill k first; four times the limit leaves room for the real twins.
 const K_PER_LIMIT = 4;
@@ -34,6 +34,11 @@ const NOT_IN_PROJECT = {
   root: "the project root",
   outside: "outside the project",
 } as const;
+// Why a project file has no windows, in words a caller can act on.
+const UNWINDOWED = {
+  "unsupported file type": `unsupported file type: duplicate search covers ${WINDOWED_EXTENSIONS.join(", ")}`,
+  "test path": "test, spec or .d.ts file",
+} satisfies Record<WindowSkip, string>;
 const DUPLICATES_OFF =
   "Duplicate search is off for this project. Ask the user, then run index_project with duplicates: true (the first build can take over an hour on large projects).";
 
@@ -100,6 +105,9 @@ interface Run {
   budget: number;
 }
 
+// A caller's file entry and what it names.
+type Spec = { readonly spec: string; readonly target: Target | Skip };
+
 // One spec's outcome: its pairs, or why it has none.
 type Answer =
   | { readonly kind: "pairs"; readonly pairs: readonly DuplicatePair[] }
@@ -111,7 +119,8 @@ function parseTarget(spec: string, root: CanonicalPath): Target | Skip {
   const location = relativeToRoot(root, match?.[1] ?? "");
   if (location.kind !== "inside") return skip(NOT_IN_PROJECT[location.kind]);
   const file = location.path;
-  if (!isWindowedPath(file)) return skip("test path or unsupported file type");
+  const unwindowed = windowSkip(file);
+  if (unwindowed) return skip(UNWINDOWED[unwindowed]);
   const from = Number(match?.[2] ?? 1);
   const last = match?.[3] ?? match?.[2];
   const to = last === undefined ? WHOLE_FILE_END : Number(last);
@@ -150,8 +159,7 @@ const note = (text: string): Answer => ({ kind: "note", text });
 const pairLine = (pair: DuplicatePair): string =>
   `${pair.file}:${pair.from}-${pair.to} <-> ${pair.otherFile}:${pair.otherFrom}-${pair.otherTo} ${pair.score.toFixed(SCORE_DIGITS)} ${pair.band}`;
 
-async function answerFor(run: Run, spec: string): Promise<Answer> {
-  const target = parseTarget(spec, run.root);
+async function answerFor(run: Run, { spec, target }: Spec): Promise<Answer> {
   if (target.kind === "skip") return note(`${spec}: ${target.reason}`);
   const windows = run.index.windowsOf(target.file, target.from, target.to);
   if (windows.length === 0)
@@ -189,6 +197,19 @@ export async function handleFindDuplicates(
   ctx: ToolContext
 ): Promise<McpResponse> {
   const projectPath = validateProjectPath(args.path ?? process.cwd());
+  const specs = args.files.map((spec) => ({
+    spec,
+    target: parseTarget(spec, projectPath),
+  }));
+  const skipped = specs.flatMap(({ spec, target }) =>
+    target.kind === "skip" ? [`${spec}: ${target.reason}`] : []
+  );
+  // No index, sync or opt-in changes the answer for a call that names no windowed file.
+  if (skipped.length === specs.length)
+    return answered(
+      { pairs: [], notes: skipped, lines: skipped, filesWithPairs: 0 },
+      specs.length
+    );
   const store = await openIndexedStore(projectPath);
   if (!store)
     return unavailable(
@@ -220,7 +241,7 @@ export async function handleFindDuplicates(
   } satisfies Run;
   const pairs: DuplicatePair[] = [];
   let filesWithPairs = 0;
-  for (const spec of args.files) {
+  for (const spec of specs) {
     const answer = await answerFor(run, spec);
     if (answer.kind === "note") {
       notes.push(answer.text);
@@ -234,14 +255,27 @@ export async function handleFindDuplicates(
   console.error(
     `[dfine-semantic] find_duplicates: ${pairs.length} pairs for ${args.files.length} files in ${projectPath}`
   );
-  // Text and notes end alike: some clients show the model only the structured answer.
-  const summary = `${pairs.length} pairs in ${filesWithPairs} of ${args.files.length} files. Candidates only: read both ranges, likely pairs first, before merging anything.`;
-  notes.push(summary);
-  lines.push(summary);
-  return structuredResult(lines.join("\n"), {
+  return answered({ pairs, notes, lines, filesWithPairs }, specs.length);
+}
+
+// What one call gathered before its summary: notes for clients, lines for the model.
+type Gathered = {
+  readonly pairs: readonly DuplicatePair[];
+  readonly notes: readonly string[];
+  readonly lines: readonly string[];
+  readonly filesWithPairs: number;
+};
+
+// Text and notes end alike: some clients show the model only the structured answer.
+function answered(
+  { pairs, notes, lines, filesWithPairs }: Gathered,
+  fileCount: number
+): McpResponse {
+  const summary = `${pairs.length} pairs in ${filesWithPairs} of ${fileCount} files. Candidates only: read both ranges, likely pairs first, before merging anything.`;
+  return structuredResult([...lines, summary].join("\n"), {
     status: "ok",
-    pairs,
-    notes,
+    pairs: [...pairs],
+    notes: [...notes, summary],
   } satisfies DuplicatesOutput);
 }
 

@@ -36,8 +36,16 @@ interface CodeLine {
   readonly t: string;
 }
 
+// Why a path gets no windows: a type no rule was measured for, or a test file.
+export type WindowSkip = "unsupported file type" | "test path";
+
+export function windowSkip(path: string): WindowSkip | null {
+  if (!WINDOWED.has(extname(path))) return "unsupported file type";
+  return TEST_PATH.test(path) ? "test path" : null;
+}
+
 export function isWindowedPath(path: string): boolean {
-  return WINDOWED.has(extname(path)) && !TEST_PATH.test(path);
+  return windowSkip(path) === null;
 }
 
 function isList(texts: readonly string[]): boolean {
