@@ -12,7 +12,7 @@ Everything runs locally once the model is downloaded.
 - The server speaks MCP over stdio, revision 2026-07-28 and the 2025 revisions, and works with any
   MCP client, for example Claude Code or Cursor.
 - Each search first re-indexes the files that changed since the last one. If that would take longer
-  than about a minute, clients on MCP 2026-07-28 that support forms ask you first. Other clients
+  than about ten minutes, clients on MCP 2026-07-28 that support forms ask you first. Other clients
   re-index without asking.
 - Long runs report progress to clients that ask for it. Claude Code and other clients that reset
   their timeout on progress keep such a call open until it finishes.

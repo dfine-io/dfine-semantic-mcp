@@ -13,7 +13,8 @@ import type { ToolContext } from "../utils/context.js";
 // Pooled fp32 on a 1,400-file TS repo: about 1.5 s per file for chunks; 16.2 windows per file at 8.3/s.
 const EST_SECONDS_PER_FILE = 1.5;
 const EST_WINDOW_SECONDS_PER_FILE = 2;
-const SYNC_PROMPT_SECONDS = 60;
+// Up to about ten minutes a search syncs without a dialog: about 170 files with windows, 400 without.
+const SYNC_PROMPT_SECONDS = 600;
 const SECONDS_PER_MINUTE = 60;
 
 // "with": chunks and windows; "none": chunks only; "only": windows for files whose chunks are current.

@@ -2,6 +2,7 @@
 
 ## 0.1.6
 
+- Changed searches to re-index changed files without asking up to about ten minutes; longer runs still ask first
 - Fixed `find_duplicates` asking to index a project for files it never covers, such as C++ or CSS: it now names the reason
 
 ## 0.1.5
